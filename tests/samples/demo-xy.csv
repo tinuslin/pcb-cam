@@ -1,0 +1,6 @@
+Designator,Comment,Layer,Footprint,Mid X,Mid Y,Rotation
+R1,10K,TopLayer,0603,10.000,30.000,0
+R2,10K,TopLayer,0603,10.000,22.500,180
+R4,10K,BottomLayer,0603,10.000,6.000,90
+U1,OPAMP,TopLayer,SOIC-8,20.000,10.000,270
+X9,NC,TopLayer,0402,40.000,32.000,0

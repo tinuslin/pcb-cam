@@ -1,0 +1,1801 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PCB-CAM · Gerber / ODB++ 查看与分析</title>
+<style>
+  :root{
+    --bg:#0e1319; --bg2:#0a0e13; --panel:#141b24; --panel2:#1a232f; --line:#232f3d;
+    --fg:#e8eef7; --fg2:#93a3b8; --accent:#4ea1ff; --ok:#3ddc97; --warn:#ffc857; --danger:#ff6b6b;
+    --grid:#1b242f;
+  }
+  body.light{
+    --bg:#eef2f7; --bg2:#e3e9f1; --panel:#ffffff; --panel2:#f3f6fa; --line:#dbe3ee;
+    --fg:#16202c; --fg2:#5d6b7c; --accent:#1f6feb; --grid:#d8e0ea;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font:13px/1.5 "Segoe UI","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    background:var(--bg); color:var(--fg); overflow:hidden;
+    display:grid; grid-template-rows:auto 1fr auto;
+  }
+  header{
+    display:flex; align-items:center; gap:12px; padding:8px 12px;
+    background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap;
+  }
+  .brand{display:flex; align-items:baseline; gap:8px; white-space:nowrap}
+  .brand b{font-size:15px; letter-spacing:.4px}
+  .brand span{color:var(--fg2); font-size:11px}
+  .pathbar{display:flex; gap:6px; flex:1; min-width:260px}
+  .pathbar input{
+    flex:1; min-width:120px; background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+    border-radius:6px; padding:6px 9px; font-size:12px; outline:none;
+  }
+  .pathbar input:focus{border-color:var(--accent)}
+  button{
+    background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:6px;
+    padding:6px 10px; font-size:12px; cursor:pointer; white-space:nowrap; transition:.15s;
+  }
+  button:hover{border-color:var(--accent); color:var(--accent)}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+  button.primary:hover{filter:brightness(1.1); color:#fff}
+  button.on{background:rgba(78,161,255,.18); border-color:var(--accent); color:var(--accent)}
+  .tools{display:flex; gap:6px; flex-wrap:wrap; align-items:center}
+  .unitsel{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--fg2);
+    background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:0 4px 0 8px; height:30px}
+  .unitsel select{background:transparent; border:none; color:var(--fg); font:inherit; font-size:12px;
+    outline:none; padding:2px; cursor:pointer; max-width:104px}
+  .unitsel select option{background:var(--panel); color:var(--fg)}
+  main{display:grid; grid-template-columns:330px 1fr; min-height:0}
+  aside{
+    background:var(--panel); border-right:1px solid var(--line); overflow-y:auto; padding:0 0 20px;
+  }
+  aside::-webkit-scrollbar{width:8px}
+  aside::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px}
+  .sec{border-bottom:1px solid var(--line); padding:8px 10px 10px}
+  .sec-h{display:flex; align-items:center; justify-content:space-between; margin-bottom:7px}
+  .sec-h>span:first-child{font-size:11px; letter-spacing:1.2px; color:var(--fg2); text-transform:uppercase}
+  .mini button{padding:2px 7px; font-size:11px}
+  .layers{display:flex; flex-direction:column; gap:2px}
+  .layer{
+    display:grid; grid-template-columns:16px 10px 1fr auto 34px 56px; align-items:center; gap:6px;
+    padding:3px 4px; border-radius:5px; cursor:pointer;
+  }
+  .layer:hover{background:var(--panel2)}
+  .layer.off{opacity:.38}
+  .layer .ck{margin:0; accent-color:var(--accent); cursor:pointer}
+  .layer .dot{width:10px; height:10px; border-radius:3px; box-shadow:0 0 0 1px rgba(0,0,0,.25)}
+  .layer .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px}
+  .layer .tag{font-size:10px; color:var(--fg2); border:1px solid var(--line); border-radius:4px; padding:0 4px}
+  .layer .tag.copper{color:#ff9b8a; border-color:#5c3229}
+  .layer .tag.mask{color:#8fd08a; border-color:#2f4a2f}
+  .layer .tag.silk{color:#cfd9e6; border-color:#3a4552}
+  .layer .tag.paste{color:#a9b4c2; border-color:#39424d}
+  .layer .tag.outline{color:#ffd166; border-color:#4a3f22}
+  .layer .cnt{font-size:11px; color:var(--fg2); text-align:right}
+  .layer .opa{width:56px; accent-color:var(--accent); cursor:pointer}
+  table{width:100%; border-collapse:collapse; font-size:11.5px}
+  th,td{padding:3px 4px; text-align:left; border-bottom:1px solid var(--line)}
+  th{color:var(--fg2); font-weight:500; font-size:10.5px; letter-spacing:.5px}
+  td.n,th.n{text-align:right; font-variant-numeric:tabular-nums}
+  .kv{display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12px}
+  .kv .k{color:var(--fg2)}
+  .kv .v{text-align:right; font-variant-numeric:tabular-nums}
+  .warnbox{margin-top:8px; display:flex; flex-direction:column; gap:4px}
+  .warnitem{font-size:11.5px; color:var(--warn); background:rgba(255,200,87,.08);
+    border-left:2px solid var(--warn); padding:3px 7px; border-radius:0 4px 4px 0}
+  .warnitem.err{color:var(--danger); border-color:var(--danger); background:rgba(255,107,107,.08)}
+  #view{position:relative; background:var(--bg2); min-width:0; min-height:0}
+  canvas{display:block; width:100%; height:100%; cursor:crosshair; touch-action:none}
+  #hud{position:absolute; left:10px; top:10px; pointer-events:none; font-size:11.5px; color:var(--fg2);
+    background:rgba(0,0,0,.28); padding:5px 9px; border-radius:6px; backdrop-filter:blur(3px); line-height:1.7}
+  body.light #hud{background:rgba(255,255,255,.7)}
+  #loading{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:10px;
+    background:rgba(8,12,17,.55); color:#fff; font-size:13px; backdrop-filter:blur(2px); z-index:5}
+  #loading.hidden{display:none}
+  .spinner{width:18px;height:18px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;
+    border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  footer{
+    display:flex; gap:18px; align-items:center; padding:5px 12px; font-size:11.5px; color:var(--fg2);
+    background:var(--panel); border-top:1px solid var(--line);
+  }
+  footer .status{margin-left:auto}
+  footer .status.err{color:var(--danger)}
+  footer .status.ok{color:var(--ok)}
+  .empty{color:var(--fg2); font-size:11.5px; padding:4px 2px}
+  .pill{display:inline-block; padding:0 5px; border-radius:4px; background:var(--panel2);
+    border:1px solid var(--line); font-size:10.5px; color:var(--fg2); margin-left:4px}
+
+  /* ---------- 打开资料（本机浏览） ---------- */
+  #pick{position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center}
+  #pick.hidden{display:none}
+  #pick .mask{position:absolute; inset:0; background:rgba(3,7,11,.55); backdrop-filter:blur(2px)}
+  #pick .dlg{position:relative; width:min(980px,94vw); height:min(640px,88vh); display:flex;
+    flex-direction:column; background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 26px 70px rgba(0,0,0,.5); overflow:hidden}
+  .pick-hd{display:flex; align-items:center; gap:8px; padding:9px 12px; border-bottom:1px solid var(--line)}
+  .pick-hd b{font-size:13px; white-space:nowrap; letter-spacing:.3px}
+  .pick-hd input{flex:1; min-width:120px; background:var(--panel2); border:1px solid var(--line);
+    color:var(--fg); border-radius:6px; padding:5px 9px; font-size:12px; outline:none}
+  .pick-hd input:focus{border-color:var(--accent)}
+  .pick-body{flex:1; display:grid; grid-template-columns:190px 1fr; min-height:0}
+  .pick-side{border-right:1px solid var(--line); overflow-y:auto; padding:2px 0 10px}
+  .pick-side::-webkit-scrollbar{width:8px}
+  .pick-side::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px}
+  .side-h{font-size:10px; letter-spacing:1.1px; color:var(--fg2); text-transform:uppercase; padding:9px 12px 3px}
+  .place{padding:4px 12px; font-size:12px; cursor:pointer; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; border-left:2px solid transparent}
+  .place:hover{background:var(--panel2); color:var(--accent)}
+  .place.on{background:rgba(78,161,255,.14); color:var(--accent); border-left-color:var(--accent)}
+  .pick-main{display:flex; flex-direction:column; min-width:0; min-height:0}
+  .crumbs{display:flex; gap:2px; flex-wrap:wrap; align-items:center; padding:7px 12px;
+    border-bottom:1px solid var(--line); font-size:11.5px}
+  .crumbs span{cursor:pointer; color:var(--fg2); padding:1px 4px; border-radius:4px; max-width:220px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .crumbs span:hover{background:var(--panel2); color:var(--accent)}
+  .crumbs i{color:var(--fg2); font-style:normal; opacity:.45}
+  .pick-tools{display:flex; align-items:center; gap:12px; padding:7px 12px; border-bottom:1px solid var(--line)}
+  .pick-tools input{flex:1; min-width:80px; background:var(--panel2); border:1px solid var(--line);
+    color:var(--fg); border-radius:6px; padding:4px 8px; font-size:12px; outline:none}
+  .pick-tools input:focus{border-color:var(--accent)}
+  .pick-tools label{display:flex; align-items:center; gap:5px; font-size:11.5px;
+    color:var(--fg2); cursor:pointer; white-space:nowrap}
+  .pick-list{flex:1; overflow-y:auto; padding:3px 0 8px}
+  .pick-list::-webkit-scrollbar{width:8px}
+  .pick-list::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px}
+  .row{display:grid; grid-template-columns:16px 1fr auto 74px; gap:8px; align-items:center;
+    padding:5px 12px; cursor:pointer; font-size:12.5px; border-left:2px solid transparent}
+  .row:hover{background:var(--panel2)}
+  .row.sel{background:rgba(78,161,255,.16); border-left-color:var(--accent)}
+  .row .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .row .nm small{color:var(--fg2); font-size:11px; margin-left:1px}
+  .row .bd{font-size:10px; padding:0 5px; border-radius:4px; border:1px solid var(--line);
+    color:var(--fg2); white-space:nowrap}
+  .row .bd.odb{color:#ffd166; border-color:#4a3f22}
+  .row .bd.pcb{color:#8fd08a; border-color:#2f4a2f}
+  .row .bd.archive{color:#a9b4c2; border-color:#39424d}
+  .row .sz{font-size:11px; color:var(--fg2); text-align:right; font-variant-numeric:tabular-nums}
+  .ic{position:relative; width:14px; height:14px; display:block}
+  .ic.dir:before{content:''; position:absolute; left:0; top:5px; width:14px; height:8px;
+    border-radius:2px; background:#e0aa3e; opacity:.85}
+  .ic.dir:after{content:''; position:absolute; left:1px; top:2px; width:6px; height:4px;
+    border-radius:2px 2px 0 0; background:#e0aa3e; opacity:.85}
+  .ic.file:before{content:''; position:absolute; left:2px; top:1px; width:10px; height:12px;
+    border-radius:2px; border:1.5px solid var(--fg2); opacity:.75}
+  .ic.pkg:before{content:''; position:absolute; left:1px; top:3px; width:12px; height:9px;
+    border-radius:2px; border:1.5px solid #8fa3ba; opacity:.8}
+  .ic.pkg:after{content:''; position:absolute; left:5px; top:1px; width:4px; height:3px;
+    border:1.5px solid #8fa3ba; border-bottom:none; border-radius:2px 2px 0 0; opacity:.8}
+  .pick-ft{display:flex; align-items:center; gap:8px; padding:9px 12px; border-top:1px solid var(--line);
+    flex-wrap:wrap}
+  .pick-sel{flex:1; min-width:140px; font-size:11.5px; color:var(--fg2); overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap}
+  button:disabled{opacity:.42; cursor:not-allowed}
+  button:disabled:hover{border-color:var(--line); color:var(--fg)}
+
+  /* ---------- 定位 ---------- */
+  .gotobar{display:grid; grid-template-columns:1fr 1fr 62px auto; gap:5px; align-items:center}
+  .gotobar input{
+    background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:5px;
+    padding:4px 7px; font-size:12px; outline:none; width:100%; font-variant-numeric:tabular-nums;
+  }
+  .gotobar input:focus{border-color:var(--accent)}
+  .gotobar select{
+    background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:5px;
+    padding:4px 2px; font-size:11.5px; outline:none;
+  }
+  .gotobar button{padding:4px 8px}
+  .gotoinfo{margin-top:6px; font-size:11px; color:var(--fg2); line-height:1.5; word-break:break-all}
+  .gotoinfo b{color:var(--accent)}
+  .chk.row2{display:flex; align-items:center; gap:5px; margin-top:7px;
+    font-size:11.5px; color:var(--fg2); cursor:pointer}
+
+  /* ---------- 元件 / XY ---------- */
+  .compsearch{
+    width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+    border-radius:5px; padding:3px 7px; font-size:11.5px; outline:none; margin:2px 0 5px;
+  }
+  .compsearch:focus{border-color:var(--accent)}
+  .comps{display:flex; flex-direction:column; gap:1px; max-height:250px; overflow-y:auto}
+  .tabs{display:flex; gap:4px; margin-bottom:5px}
+  .tab{font-size:11px; padding:1px 8px; border-radius:9px; border:1px solid var(--line);
+    color:var(--fg2); cursor:pointer}
+  .tab:hover{border-color:var(--accent)}
+  .tab.on{background:rgba(78,161,255,.16); border-color:var(--accent); color:var(--accent)}
+  .chead{font-size:11px; color:var(--fg2); margin-bottom:4px}
+  .alignrow{display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+    margin:0 0 6px; padding:5px 6px; border:1px solid var(--line); border-radius:5px;
+    background:var(--panel2); font-size:10.5px; color:var(--fg2)}
+  .alignrow label{display:flex; align-items:center; gap:3px}
+  .alignrow .al{font:inherit; color:var(--fg); background:var(--panel);
+    border:1px solid var(--line); border-radius:3px; padding:1px 2px; outline:none}
+  .alignrow .al:focus{border-color:var(--accent)}
+  .alignrow .tin{width:46px; padding:1px 3px}
+  .alignrow .alignhint{opacity:.62}
+  .comps::-webkit-scrollbar{width:7px}
+  .comps::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px}
+  .csum{display:flex; flex-wrap:wrap; gap:4px; margin-bottom:5px}
+  .chip{font-size:10px; padding:0 6px; border-radius:9px; border:1px solid var(--line); color:var(--fg2)}
+  .chip.ok{color:#2f9e6b; border-color:#2f6b4f}
+  .chip.warn{color:#b5822a; border-color:#6b5527}
+  .chip.err{color:#d24a4a; border-color:#6b2f2f}
+  body.light .chip.ok{color:#1f7a4d}
+  body.light .chip.warn{color:#8a6113}
+  body.light .chip.err{color:#b12929}
+  .comp{display:grid; grid-template-columns:auto 15px 1fr auto; gap:5px; align-items:center;
+    padding:2px 4px; border-radius:4px; cursor:pointer; font-size:11.5px; line-height:1.6}
+  .comp:hover{background:var(--panel2)}
+  .comp.sel{background:rgba(78,161,255,.18)}
+  .comp b{font-weight:600}
+  .comp .cs{font-size:9px; text-align:center; color:var(--fg2); border:1px solid var(--line);
+    border-radius:3px; line-height:11px}
+  .comp .cs.b{color:#3b7dd8; border-color:#3b5c8a}
+  .comp .xy{color:var(--fg2); font-size:10.5px; text-align:right; font-variant-numeric:tabular-nums}
+  .comp .st{width:6px; height:6px; border-radius:50%; background:var(--fg2); opacity:.5}
+  .comp .st.ok{background:#2f9e6b; opacity:1}
+  .comp .st.offset,.comp .st.wrong_side{background:#e0a01e; opacity:1}
+  .comp .st.no_pad{background:#e04343; opacity:1}
+  .comp .st.outside{background:#c8489c; opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>PCB-CAM</b><span>迷你 CAM350 · Gerber / ODB++</span></div>
+  <div class="pathbar">
+    <input id="path" spellcheck="false" placeholder="输入 Gerber 目录 / zip / tgz / ODB++ 目录 / 单个文件路径">
+    <button id="btnBrowse" class="primary" title="浏览本机文件与文件夹（Ctrl+O）">浏览…</button>
+    <button id="btnLoad" title="载入输入框中的路径">加载</button>
+    <button id="btnSample" title="加载内置演示板">示例</button>
+  </div>
+  <div class="tools">
+    <label class="unitsel" title="尺寸单位：公制 mm / 英制 mil、inch（快捷键 U 循环切换）">
+      <span>单位</span>
+      <select id="unitSel">
+        <option value="mm">mm 公制</option>
+        <option value="mil">mil 英制</option>
+        <option value="inch">inch 英制</option>
+        <option value="both">mm / mil</option>
+      </select>
+    </label>
+    <button data-act="fit" title="F">适应窗口</button>
+    <button data-act="zin" title="+">放大</button>
+    <button data-act="zout" title="-">缩小</button>
+    <button data-act="measure" title="M">测距</button>
+    <button data-act="grid" class="on" title="G">网格</button>
+    <button data-act="theme" title="切换深/浅色">主题</button>
+    <button data-act="png">导出 PNG</button>
+    <button data-act="svg">导出 SVG</button>
+    <button data-act="report">分析报告</button>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <div class="sec">
+      <div class="sec-h"><span>图层</span><span class="mini"><button id="allOn">全显</button> <button id="allOff">全隐</button></span></div>
+      <div id="layerList" class="layers"><div class="empty">尚未加载资料</div></div>
+    </div>
+    <div class="sec">
+      <div class="sec-h"><span>钻孔</span><span id="drillTotal" style="font-size:11px;color:var(--fg2)"></span></div>
+      <div id="drillBox"><div class="empty">—</div></div>
+    </div>
+    <div class="sec">
+      <div class="sec-h"><span>定位</span>
+        <span class="mini"><button id="btnPickPt" title="在图上点一下取坐标">取点</button><button id="btnGotoClear">清除</button></span>
+      </div>
+      <div class="gotobar">
+        <input id="gx" spellcheck="false" placeholder="X">
+        <input id="gy" spellcheck="false" placeholder="Y">
+        <select id="gunit" title="输入单位">
+          <option value="1">mm</option>
+          <option value="25.4">inch</option>
+          <option value="0.0254">mil</option>
+        </select>
+        <button id="btnGo" class="primary">跳转</button>
+      </div>
+      <div id="gotoInfo" class="gotoinfo">输入坐标回车跳转；也可点「取点」在图上取</div>
+      <label class="chk row2"><input type="checkbox" id="follow"> 视图跟随光标（居中）</label>
+    </div>
+    <div class="sec">
+      <div class="sec-h"><span>元件 / XY 数据</span>
+        <span class="mini"><button id="btnXyImport" title="导入贴片坐标 / 元件坐标文件">导入…</button><button id="btnCompCsv" title="导出元件坐标 CSV">导出 CSV</button></span>
+      </div>
+      <div id="compBox"><div class="empty">尚未加载元件数据</div></div>
+    </div>
+    <div class="sec">
+      <div class="sec-h"><span>分析</span></div>
+      <div id="analysisBox"><div class="empty">—</div></div>
+    </div>
+    <div class="sec">
+      <div class="sec-h"><span>网表</span></div>
+      <div id="netBox"><div class="empty">—</div></div>
+    </div>
+  </aside>
+
+  <section id="view">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <div id="loading"><div class="spinner"></div><span id="loadingText">解析中…</span></div>
+  </section>
+</main>
+
+<footer>
+  <span id="coords">X — Y —</span>
+  <span id="scaleInfo"></span>
+  <span id="status" class="status"></span>
+</footer>
+
+<div id="pick" class="hidden">
+  <div class="mask" data-close="1"></div>
+  <div class="dlg">
+    <div class="pick-hd">
+      <b id="pickTitle">打开 PCB 资料</b>
+      <input id="pickPath" spellcheck="false" placeholder="可直接粘贴路径，回车跳转">
+      <button id="pickGo" title="跳转到该路径">转到</button>
+      <button id="pickClose" title="关闭 (Esc)">✕</button>
+    </div>
+    <div class="pick-body">
+      <div class="pick-side">
+        <div class="side-h">快速位置</div>
+        <div id="pickQuick"></div>
+        <div class="side-h">驱动器</div>
+        <div id="pickDrives"></div>
+      </div>
+      <div class="pick-main">
+        <div id="pickCrumbs" class="crumbs"></div>
+        <div class="pick-tools">
+          <input id="pickFilter" spellcheck="false" placeholder="在当前目录内过滤…">
+          <label><input type="checkbox" id="pickAll"> 显示全部文件</label>
+        </div>
+        <div id="pickList" class="pick-list"></div>
+      </div>
+    </div>
+    <div class="pick-ft">
+      <span id="pickSel" class="pick-sel"></span>
+      <button id="pickUp" title="Backspace">↑ 上级</button>
+      <button id="pickEnter" title="Enter">打开选中</button>
+      <button id="pickOpenDir" class="primary">打开此文件夹</button>
+      <button id="pickCancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const TAU = Math.PI * 2;
+const $ = (id) => document.getElementById(id);
+const cv = $('cv');
+const ctx = cv.getContext('2d');
+const buf = document.createElement('canvas');
+const bctx = buf.getContext('2d');
+const gcv = document.createElement('canvas');
+const gctx = gcv.getContext('2d');
+
+const S = {
+  summary: null,
+  objs: [],
+  vis: [],
+  opa: [],
+  view: {s: 5, ox: 0, oy: 0},
+  measure: false,
+  mpts: [],
+  grid: true,
+  dpr: 1, W: 0, H: 0,
+  dragging: false,
+  moved: false,
+  last: null,
+  cursor: null,
+  // 定位
+  target: null,
+  follow: false,
+  pickPt: false,
+  // 元件 / XY
+  boardComps: [],
+  xyComps: [],
+  xy: null,
+  xyOpts: {},
+  compView: 'board',
+  selComp: -1,
+  compFilter: '',
+  showComp: true,
+};
+
+/* ---------------- 主题 ---------------- */
+function theme(){
+  const light = document.body.classList.contains('light');
+  return light
+    ? {bg:'#eef2f7', bg2:'#e3e9f1', grid:'#d8e0ea', fg:'#16202c', fg2:'#5d6b7c', frame:'#b9c6d6'}
+    : {bg:'#0e1319', bg2:'#0a0e13', grid:'#1b242f', fg:'#e8eef7', fg2:'#93a3b8', frame:'#2f3d4e'};
+}
+
+/* ---------------- 工具 ---------------- */
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtN = (v) => v == null ? '—' : Number(v).toLocaleString('zh-CN');
+const fmt3 = (v) => v == null ? '—' : Number(v).toFixed(3);
+
+/* ---------------- 单位：公制 mm / 英制 mil、inch ----------------
+   内部数据一律 mm（解析时已折算），显示时按当前单位换算；
+   U === 'both' 时同时给出 mm 与 mil。 */
+const UDEF = {
+  mm:   {f: 1,      nd: 3, name: 'mm'},
+  mil:  {f: 0.0254, nd: 1, name: 'mil'},
+  inch: {f: 25.4,   nd: 4, name: 'in'},
+};
+const UKEY = 'pcbcam.unit';
+let U = 'mm';
+try { U = localStorage.getItem(UKEY) || 'mm'; } catch(e){}
+if (!(U === 'both' || UDEF[U])) U = 'mm';
+
+function upri(){ return U === 'both' ? 'mm' : U; }
+function uname(u){ const k = u || upri(); return (UDEF[k] && UDEF[k].name) || 'mm'; }
+function uhead(){ return U === 'both' ? 'mm / mil' : uname(); }
+/* 数值（不带单位） */
+function uval(v, unit, nd){
+  if (v == null || v === '' || isNaN(v)) return '—';
+  const u = unit || upri(), d = UDEF[u] || UDEF.mm;
+  const s = (Number(v) / d.f).toFixed(nd == null ? d.nd : nd);
+  return (s.charAt(0) === '-' && Number(s) === 0) ? s.slice(1) : s;
+}
+/* 数值 + 单位 */
+function ulen(v, unit, nd){
+  if (v == null || v === '' || isNaN(v)) return '—';
+  const u = unit || upri();
+  return uval(v, u, nd) + ' ' + uname(u);
+}
+/* 双单位；单单位模式下等同 ulen */
+function udual(v, nd){
+  if (v == null || v === '' || isNaN(v)) return '—';
+  if (U !== 'both') return ulen(v, null, nd);
+  return uval(v, 'mm', nd) + ' mm / ' + uval(v, 'mil', nd) + ' mil';
+}
+/* 紧凑双单位（单位写在表头） */
+function udualShort(v, nd){
+  if (v == null || v === '' || isNaN(v)) return '—';
+  if (U !== 'both') return uval(v, null, nd);
+  return uval(v, 'mm', nd) + ' / ' + uval(v, 'mil', nd);
+}
+/* 列表里的坐标：按单位取合适精度，双单位写成 mm/mil */
+function ucoord(v, ndmm){
+  if (v == null || v === '' || isNaN(v)) return '—';
+  const ndm = ndmm == null ? 2 : ndmm;
+  if (U === 'both') return uval(v, 'mm', ndm) + ' / ' + uval(v, 'mil', 0);
+  const u = upri();
+  return uval(v, u, u === 'mm' ? ndm : (u === 'mil' ? 0 : 3));
+}
+/* 两个单位的换算系数：当前显示单位 -> mm */
+function u2mm(){ return (UDEF[upri()] || UDEF.mm).f; }
+
+/* 底部状态栏坐标：主单位 + 对照单位 */
+function coordText(wx, wy, target){
+  let t;
+  if (U === 'both'){
+    t = `X ${uval(wx,'mm')} / ${uval(wx,'mil')}　Y ${uval(wy,'mm')} / ${uval(wy,'mil')}　mm / mil`;
+  } else {
+    const p = upri(), o = p === 'mm' ? 'mil' : 'mm';
+    t = `X ${uval(wx,p)}  Y ${uval(wy,p)} ${uname(p)}　|　` +
+        `${uval(wx,o)}  ${uval(wy,o)} ${uname(o)}`;
+  }
+  if (target){
+    const dd = Math.hypot(wx - target.x, wy - target.y);
+    t += `　|　距目标 ${udual(dd)}`;
+  }
+  return t;
+}
+
+/* 让「定位」输入框的单位跟随全局显示单位 */
+function syncGotoUnit(){
+  const g = $('gunit');
+  if (!g) return;
+  g.value = upri() === 'mm' ? '1' : (upri() === 'inch' ? '25.4' : '0.0254');
+}
+
+function setUnit(u, quiet){
+  if (!(u === 'both' || UDEF[u])) return;
+  U = u;
+  try { localStorage.setItem(UKEY, u); } catch(e){}
+  const sel = $('unitSel');
+  if (sel && sel.value !== u) sel.value = u;
+  syncGotoUnit();
+  if (S.target){ setGotoInputs(S.target.x, S.target.y); updateGotoInfo(); }
+  updateHud();
+  if (S.summary){ buildDrillBox(); buildAnalysis(); }
+  if ((S.boardComps || []).length || (S.xyComps || []).length) buildCompBox();
+  render();
+  if (!quiet) status('尺寸单位：' + (u === 'both' ? '公制 mm + 英制 mil' : uname(u)), 'ok');
+}
+function status(msg, kind){
+  const el = $('status'); el.textContent = msg || '';
+  el.className = 'status' + (kind === 'err' ? ' err' : kind === 'ok' ? ' ok' : '');
+}
+function loading(on, text){
+  const el = $('loading');
+  if (on){ $('loadingText').textContent = text || '解析中…'; el.classList.remove('hidden'); }
+  else el.classList.add('hidden');
+}
+
+/* ---------------- API ---------------- */
+async function api(url, opts){
+  const r = await fetch(url, opts);
+  const txt = await r.text();
+  let j;
+  try { j = JSON.parse(txt); } catch(e){ throw new Error('返回数据异常：' + txt.slice(0, 200)); }
+  if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+/* ---------------- 打开资料：本机文件 / 文件夹浏览 ---------------- */
+const P = {path:'', data:null, sel:'', selType:'', selItem:null, showAll:false, rows:[]};
+
+function fmtSize(n){
+  if (n == null) return '';
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+function normEq(a, b){
+  const f = (s) => String(s || '').replace(/[\\/]+$/, '').toLowerCase();
+  return f(a) === f(b);
+}
+
+function pickerOpen(start, mode){
+  P.mode = mode === 'xy' ? 'xy' : 'board';
+  const isXy = P.mode === 'xy';
+  const ttl = $('pickTitle');
+  if (ttl) ttl.textContent = isXy ? '选择 XY / 贴片坐标文件' : '打开 PCB 资料';
+  const all = $('pickAll');
+  if (all){ all.checked = isXy ? true : !!P.showAll; }
+  P.showAll = !!(all && all.checked);
+  $('pickOpenDir').style.display = isXy ? 'none' : '';
+  $('pick').classList.remove('hidden');
+  pickGo(start || P.path || String($('path').value || '').trim() || '');
+}
+function pickerClose(){ $('pick').classList.add('hidden'); }
+function pickerVisible(){ return !$('pick').classList.contains('hidden'); }
+
+async function pickGo(p){
+  P.sel = ''; P.selType = ''; P.selItem = null;
+  $('pickFilter').value = '';
+  $('pickList').innerHTML = '<div class="empty" style="padding:10px 14px">读取中…</div>';
+  try{
+    const d = await api('/api/browse?all=' + (P.showAll ? 1 : 0) + '&path=' + encodeURIComponent(p || ''));
+    P.data = d; P.path = d.path || '';
+    $('pickPath').value = P.path;
+    renderPlaces(); renderCrumbs(); renderPickList();
+  } catch(e){
+    $('pickList').innerHTML = '<div class="empty" style="padding:10px 14px;color:var(--danger)">'
+      + esc(e.message) + '</div>';
+    $('pickSel').textContent = e.message;
+  }
+}
+
+function placeEl(name, path){
+  const el = document.createElement('div');
+  el.className = 'place' + (normEq(path, P.path) ? ' on' : '');
+  el.textContent = name;
+  el.title = path;
+  el.onclick = () => pickGo(path);
+  return el;
+}
+function renderPlaces(){
+  const d = P.data || {quick: [], drives: []};
+  const q = $('pickQuick'); q.innerHTML = '';
+  (d.quick || []).forEach(x => q.appendChild(placeEl(x.name, x.path)));
+  const dr = $('pickDrives'); dr.innerHTML = '';
+  (d.drives || []).forEach(x => dr.appendChild(placeEl(x.name, x.path)));
+}
+
+function renderCrumbs(){
+  const d = P.data; const box = $('pickCrumbs');
+  box.innerHTML = '';
+  if (!d || !d.crumbs) return;
+  d.crumbs.forEach((c, i) => {
+    if (i) box.insertAdjacentHTML('beforeend', '<i>›</i>');
+    const s = document.createElement('span');
+    s.textContent = c.name; s.title = c.path;
+    s.onclick = () => pickGo(c.path);
+    box.appendChild(s);
+  });
+}
+
+function dirBadge(x){
+  if (x.hint === 'odb') return '<span class="bd odb">ODB++</span>';
+  if (x.hint === 'pcb') return '<span class="bd pcb">' + (x.npcb || 0) + ' 个资料</span>';
+  if (x.hint === 'archive') return '<span class="bd archive">压缩包</span>';
+  return '<span></span>';
+}
+function fileBadge(x){
+  const t = KIND_CN[x.kind] || x.kind || '';
+  return '<span class="bd">' + esc(t) + '</span>';
+}
+
+function renderPickList(){
+  const d = P.data || {dirs: [], files: []};
+  const q = String($('pickFilter').value || '').trim().toLowerCase();
+  const keep = (x) => !q || String(x.name).toLowerCase().includes(q);
+  const dirs = (d.dirs || []).filter(keep);
+  const files = (d.files || []).filter(keep);
+  const box = $('pickList');
+  box.innerHTML = '';
+  P.rows = dirs.map(x => ({name: x.name, path: x.path, type: 'dir', o: x}))
+    .concat(files.map(x => ({name: x.name, path: x.path, type: 'file', o: x})));
+  if (!P.rows.length){
+    box.innerHTML = '<div class="empty" style="padding:10px 14px">'
+      + (d.error ? esc(d.error)
+        : (q ? '没有匹配项'
+             : '该目录下未发现 PCB 资料，可勾选「显示全部文件」，或进入子目录继续找'))
+      + '</div>';
+    updatePickFoot(); return;
+  }
+  const frag = document.createDocumentFragment();
+  P.rows.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'row' + (P.sel && normEq(P.sel, r.path) ? ' sel' : '');
+    el.title = r.path;
+    el.dataset.path = r.path;
+    el.innerHTML = '<span class="ic ' + (r.type === 'dir' ? 'dir'
+        : (r.o.kind === 'archive' ? 'pkg' : 'file')) + '"></span>'
+      + '<span class="nm">' + esc(r.name) + (r.type === 'dir' ? '<small>/</small>' : '') + '</span>'
+      + (r.type === 'dir' ? dirBadge(r.o) : fileBadge(r.o))
+      + '<span class="sz">' + (r.type === 'file' ? fmtSize(r.o.size) : '') + '</span>';
+    el.onclick = () => { selectRow(r); };
+    el.ondblclick = () => pickActivate(r);
+    frag.appendChild(el);
+  });
+  box.appendChild(frag);
+  updatePickFoot();
+}
+
+function selectRow(r){
+  P.sel = r.path; P.selType = r.type; P.selItem = r;
+  Array.from($('pickList').children).forEach(el => {
+    el.classList.toggle('sel', normEq(el.dataset.path, r.path));
+  });
+  updatePickFoot();
+}
+
+function pickActivate(r){
+  if (!r) return;
+  if (r.type === 'dir'){ pickGo(r.path); return; }
+  if (P.mode === 'xy'){ pickLoadXY(r.path); return; }
+  pickLoad(r.path);
+}
+
+function updatePickFoot(){
+  const it = P.selItem;
+  $('pickSel').textContent = it ? it.path : (P.path || '');
+  $('pickEnter').disabled = !it;
+  $('pickEnter').textContent = (it && it.type === 'dir') ? '进入文件夹'
+    : (it ? (P.mode === 'xy' ? '导入此文件' : '打开选中') : (P.mode === 'xy' ? '导入' : '打开选中'));
+  $('pickUp').disabled = !(P.data && P.data.parent);
+  const d = P.data || {};
+  $('pickOpenDir').textContent = d.hint === 'odb' ? '打开此文件夹（ODB++）'
+    : (d.hint === 'pcb' ? '打开此文件夹（' + d.npcb + ' 个资料）' : '打开此文件夹');
+  $('pickOpenDir').disabled = !!d.error;
+}
+
+async function pickLoad(p){
+  if (!p) return;
+  pickerClose();
+  await loadPath(p);
+}
+
+function pickMove(delta){
+  if (!P.rows.length) return;
+  let i = P.rows.findIndex(r => normEq(r.path, P.sel));
+  if (i < 0) i = delta > 0 ? -1 : P.rows.length;
+  i = Math.max(0, Math.min(P.rows.length - 1, i + delta));
+  selectRow(P.rows[i]);
+  const el = $('pickList').children[i];
+  if (el && el.scrollIntoView) el.scrollIntoView({block: 'nearest'});
+}
+
+$('btnBrowse').addEventListener('click', () => pickerOpen());
+$('pickClose').addEventListener('click', pickerClose);
+$('pickCancel').addEventListener('click', pickerClose);
+$('pick').addEventListener('click', (e) => { if (e.target.dataset && e.target.dataset.close) pickerClose(); });
+$('pickGo').addEventListener('click', () => pickGo($('pickPath').value.trim()));
+$('pickPath').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter'){ e.preventDefault(); pickGo($('pickPath').value.trim()); }
+});
+$('pickFilter').addEventListener('input', () => {
+  P.sel = ''; P.selItem = null;
+  renderPickList();
+});
+$('pickFilter').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown'){ e.preventDefault(); pickMove(1); }
+  else if (e.key === 'ArrowUp'){ e.preventDefault(); pickMove(-1); }
+  else if (e.key === 'Enter'){ e.preventDefault(); pickActivate(P.selItem || P.rows[0]); }
+});
+$('pickAll').addEventListener('change', () => {
+  P.showAll = $('pickAll').checked;
+  pickGo(P.path);
+});
+$('pickUp').addEventListener('click', () => { if (P.data && P.data.parent) pickGo(P.data.parent); });
+$('pickEnter').addEventListener('click', () => pickActivate(P.selItem));
+$('pickOpenDir').addEventListener('click', () => pickLoad(P.path));
+
+/* ---------------- 加载 ---------------- */
+async function loadPath(p){
+  if (!p || !p.trim()) { status('请输入资料路径', 'err'); return; }
+  loading(true, '解析中…'); status('');
+  try {
+    const s = await api('/api/load', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path: p.trim()})
+    });
+    await applySummary(s);
+    status('已加载：' + s.name + '（' + (s.format || '').toUpperCase() + '）', 'ok');
+  } catch(e){
+    status(e.message, 'err');
+  } finally {
+    loading(false);
+  }
+}
+
+async function loadSample(name){
+  loading(true, '加载示例…');
+  try{
+    const s = await api('/api/sample?name=' + encodeURIComponent(name || 'gerber'));
+    S.sampleName = name || 'gerber';
+    await applySummary(s);
+    status('已加载示例：' + s.name +
+      (s.analysis && (s.analysis.units_in || {}).layers &&
+       s.analysis.units_in.layers.indexOf('inch') >= 0 ? '（英制 inch 资料）' : ''), 'ok');
+  } catch(e){ status(e.message, 'err'); }
+  finally { loading(false); }
+}
+
+async function applySummary(s){
+  S.summary = s;
+  S.objs = new Array(s.layers.length).fill(null);
+  S.vis = s.layers.map(l => l.visible !== false);
+  S.opa = s.layers.map(l => (l.opacity == null ? 1.0 : l.opacity));
+  S.mpts = [];
+  $('path').value = s.path || '';
+  buildLayerList();
+  buildDrillBox();
+  buildAnalysis();
+  buildNetBox();
+  setBoardComps(s.components || []);
+  if (S.xy) refreshXY();
+  fitView();
+  render();
+  // 逐层拉取几何
+  for (let i = 0; i < s.layers.length; i++){
+    loading(true, `读取图层 ${i+1}/${s.layers.length}：${s.layers[i].name}`);
+    try{
+      const d = await api('/api/layer?i=' + i);
+      S.objs[i] = d.objects || [];
+      render();
+    } catch(e){
+      S.objs[i] = [];
+      status('图层 ' + s.layers[i].name + ' 读取失败：' + e.message, 'err');
+    }
+  }
+  loading(false);
+  updateHud();
+}
+
+/* ---------------- 侧栏 ---------------- */
+const KIND_CN = {copper:'铜箔', mask:'阻焊', silk:'丝印', paste:'钢网', outline:'外形',
+  drill:'钻孔', rout:'铣槽', doc:'文档', component:'器件', other:'其它'};
+
+function buildLayerList(){
+  const box = $('layerList');
+  box.innerHTML = '';
+  if (!S.summary || !S.summary.layers.length){
+    box.innerHTML = '<div class="empty">尚未加载资料</div>'; return;
+  }
+  S.summary.layers.forEach((l, i) => {
+    const row = document.createElement('div');
+    row.className = 'layer' + (S.vis[i] ? '' : ' off');
+    row.dataset.i = i;
+    row.innerHTML =
+      `<input type="checkbox" class="ck" ${S.vis[i]?'checked':''} title="显示/隐藏">` +
+      `<span class="dot" style="background:${l.color}" title="${KIND_CN[l.kind]||l.kind}"></span>` +
+      `<span class="nm" title="${esc(l.file)}">${esc(l.name)}</span>` +
+      `<span class="tag ${l.kind}">${KIND_CN[l.kind]||l.kind}</span>` +
+      `<span class="cnt">${fmtN(l.count)}</span>` +
+      `<input type="range" class="opa" min="10" max="100" value="${Math.round(S.opa[i]*100)}" title="透明度">`;
+    row.querySelector('.ck').addEventListener('change', (e) => {
+      S.vis[i] = e.target.checked;
+      row.classList.toggle('off', !S.vis[i]);
+      render();
+    });
+    row.querySelector('.opa').addEventListener('input', (e) => {
+      S.opa[i] = Number(e.target.value) / 100;
+      render();
+    });
+    row.querySelector('.dot').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const solo = S.vis.filter((v, k) => k !== i && v).length > 0 && !S.vis[i];
+      S.vis = S.vis.map((v, k) => k === i ? true : (solo ? false : v));
+      buildLayerList(); render();
+    });
+    box.appendChild(row);
+  });
+}
+
+function buildDrillBox(){
+  const d = S.summary && S.summary.drills;
+  const box = $('drillBox');
+  $('drillTotal').textContent = '';
+  if (!d || (!d.holes.length && !d.slots.length)){
+    box.innerHTML = '<div class="empty">未发现钻孔数据</div>'; return;
+  }
+  const rows = d.tools.map(t =>
+    `<tr><td>T${t.num}</td><td class="n">${udualShort(t.d)}</td><td class="n">${fmtN(t.count)}</td>
+     <td>${t.plated ? '镀通' : '非镀通'}</td></tr>`).join('');
+  $('drillTotal').textContent = `${d.holes.length} 孔 / ${d.slots.length} 槽`;
+  box.innerHTML = `<table><thead><tr><th>刀</th><th class="n">孔径(${uhead()})</th><th class="n">数量</th><th>属性</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function buildAnalysis(){
+  const a = S.summary && S.summary.analysis;
+  const box = $('analysisBox');
+  if (!a){ box.innerHTML = '<div class="empty">—</div>'; return; }
+  const rows = [];
+  if (a.board_size){
+    const w = a.board_size.w, h = a.board_size.h;
+    let txt;
+    if (U === 'both'){
+      txt = `${uval(w,'mm',2)} × ${uval(h,'mm',2)} mm<br>` +
+            `<span style="opacity:.62">${uval(w,'mil',1)} × ${uval(h,'mil',1)} mil</span>`;
+    } else {
+      txt = `${uval(w,null,2)} × ${uval(h,null,2)} ${uname()}`;
+    }
+    rows.push(['板面尺寸', txt]);
+  }
+  rows.push(['图层数', `${a.layer_count} <span class="pill">铜箔 ${a.copper_count}</span>`]);
+  if (a.units_in){
+    const nm = {mm: 'mm 公制', inch: 'inch 英制', micron: 'µm'};
+    const lu = (a.units_in.layers || []).map(u => nm[u] || u);
+    const parts = [];
+    if (lu.length) parts.push('层 ' + lu.join(' / '));
+    if (a.units_in.drill) parts.push('钻孔 ' + (nm[a.units_in.drill] || a.units_in.drill));
+    if (parts.length) rows.push(['源文件单位', parts.join('；')]);
+  }
+  rows.push(['图元总数', fmtN(a.total_objects)]);
+  rows.push(['铜箔面积', `${a.copper_area_cm2} cm²` +
+    (a.copper_area_cm2 != null ? ` <span class="pill">${(a.copper_area_cm2 / 6.4516).toFixed(2)} in²</span>` : '')]);
+  rows.push(['最小线宽', a.min_trace_width != null ? udual(a.min_trace_width) : '—']);
+  if (a.annular){
+    rows.push(['最小环宽', a.annular.min_ring != null ? udual(a.annular.min_ring) : '—']);
+    rows.push(['孔无铜环', fmtN(a.annular.no_pad) + ' 个']);
+    rows.push(['环宽偏小', fmtN(a.annular.thin_ring) + ' 个']);
+  }
+  let html = '<div class="kv">' + rows.map(r => `<div class="k">${r[0]}</div><div class="v">${r[1]}</div>`).join('') + '</div>';
+  const warns = a.warnings || [];
+  if (warns.length){
+    html += '<div class="warnbox">' + warns.slice(0, 8).map(w => `<div class="warnitem">${esc(w)}</div>`).join('') + '</div>';
+  }
+  box.innerHTML = html;
+}
+
+function buildNetBox(){
+  const box = $('netBox');
+  const ns = S.summary && S.summary.netlists;
+  const cmp = S.summary && S.summary.analysis && S.summary.analysis.netlist_compare;
+  if (!ns || !ns.length){ box.innerHTML = '<div class="empty">未提供网表（IPC-D-356 / ODB++ 网表）</div>'; return; }
+  let html = '<table><thead><tr><th>文件</th><th class="n">网络</th><th class="n">测试点</th></tr></thead><tbody>';
+  ns.forEach(n => {
+    html += `<tr><td title="${esc(n.source)}">${esc(n.name)}</td><td class="n">${fmtN(n.net_count)}</td>
+      <td class="n">${fmtN(n.point_count)}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  if (cmp){
+    html += `<div class="kv" style="margin-top:8px">
+      <div class="k">仅 A 有</div><div class="v">${cmp.only_a_count} 网络</div>
+      <div class="k">仅 B 有</div><div class="v">${cmp.only_b_count} 网络</div>
+      <div class="k">点数差异</div><div class="v">${cmp.count_diff_total} 网络</div></div>`;
+  }
+  box.innerHTML = html;
+}
+
+/* ---------------- 视图 ---------------- */
+function fitView(){
+  const b = S.summary && S.summary.bbox;
+  if (!b || !S.W){ S.view = {s: 5, ox: 60, oy: 60}; return; }
+  const w = Math.max(1e-3, b[2] - b[0]), h = Math.max(1e-3, b[3] - b[1]);
+  const pad = 1.12;
+  const s = Math.min(S.W / (w * pad), S.H / (h * pad));
+  S.view.s = s;
+  S.view.ox = S.W / 2 - (b[0] + b[2]) / 2 * s;
+  S.view.oy = S.H / 2 + (b[1] + b[3]) / 2 * s;
+  updateHud();
+}
+
+function resize(){
+  const r = cv.getBoundingClientRect();
+  S.dpr = Math.min(2, window.devicePixelRatio || 1);
+  S.W = Math.max(10, Math.round(r.width));
+  S.H = Math.max(10, Math.round(r.height));
+  cv.width = Math.round(S.W * S.dpr);
+  cv.height = Math.round(S.H * S.dpr);
+  buf.width = cv.width; buf.height = cv.height;
+  render();
+}
+
+function render(){
+  if (!S.W) return;
+  const g = ctx, T = theme(), dpr = S.dpr;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = T.bg; g.fillRect(0, 0, S.W, S.H);
+  if (S.grid) drawGrid(g);
+  drawFrame(g);
+
+  const v = S.view;
+  const nl = S.summary ? S.summary.layers.length : 0;
+  for (let i = 0; i < nl; i++){
+    if (!S.vis[i] || !S.objs[i] || !S.objs[i].length) continue;
+    const layer = S.summary.layers[i];
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
+    bctx.clearRect(0, 0, buf.width, buf.height);
+    bctx.setTransform(v.s * dpr, 0, 0, -v.s * dpr, v.ox * dpr, v.oy * dpr);
+    bctx.strokeStyle = layer.color;
+    bctx.fillStyle = layer.color;
+    bctx.lineCap = 'round';
+    bctx.lineJoin = 'round';
+    drawObjs(bctx, S.objs[i], v.s * dpr, v, dpr);
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = S.opa[i];
+    g.drawImage(buf, 0, 0);
+    g.globalAlpha = 1;
+  }
+  drawDrills(g);
+  drawComps(g);
+  drawTarget(g);
+  drawMeasure(g);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  updateHud();
+}
+
+function drawObjs(c, objs, pxScale, view, dpr){
+  let mode = 'source-over';
+  c.globalCompositeOperation = mode;
+  for (let k = 0; k < objs.length; k++){
+    const o = objs[k];
+    const want = o.neg ? 'destination-out' : 'source-over';
+    if (want !== mode){ c.globalCompositeOperation = want; mode = want; }
+    drawObj(c, o, pxScale, view, dpr, false);
+  }
+  c.globalCompositeOperation = 'source-over';
+}
+
+function addPoly(c, pts){
+  if (!pts || pts.length < 2) return;
+  c.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
+  c.closePath();
+}
+
+function drawObj(c, o, pxScale, view, dpr, nested){
+  switch (o.t){
+    case 'path': {
+      const p = o.p;
+      if (!p || p.length < 2) return;
+      const w = Math.max(o.w || 0.01, 0.01);
+      c.lineWidth = (w * pxScale < 0.75) ? 0.75 / pxScale : w;
+      c.beginPath();
+      c.moveTo(p[0][0], p[0][1]);
+      for (let i = 1; i < p.length; i++) c.lineTo(p[i][0], p[i][1]);
+      c.stroke();
+      break;
+    }
+    case 'poly': {
+      if (!o.p || o.p.length < 3) return;
+      c.beginPath(); addPoly(c, o.p); c.fill();
+      break;
+    }
+    case 'circle': {
+      c.beginPath(); c.arc(o.c[0], o.c[1], Math.max(o.r, 0.005), 0, TAU); c.fill();
+      break;
+    }
+    case 'ring': {
+      c.beginPath();
+      c.arc(o.c[0], o.c[1], o.r, 0, TAU, false);
+      c.moveTo(o.c[0] + o.ri, o.c[1]);
+      c.arc(o.c[0], o.c[1], Math.max(o.ri, 1e-4), 0, TAU, true);
+      c.fill('evenodd');
+      break;
+    }
+    case 'poly2': {
+      c.beginPath(); addPoly(c, o.out);
+      (o.in || []).forEach(h => addPoly(c, h));
+      c.fill('evenodd');
+      break;
+    }
+    case 'group': {
+      // 闪光组：正/负曝光在独立小画布内合成，再整体贴回（负曝光不影响底层）
+      if (nested || !o.b || !view) return;
+      const b = o.b;
+      const x0 = view.ox + b[0] * view.s, x1 = view.ox + b[2] * view.s;
+      const y0 = view.oy - b[3] * view.s, y1 = view.oy - b[1] * view.s;
+      const gw = Math.ceil(x1 - x0) + 2, gh = Math.ceil(y1 - y0) + 2;
+      if (gw < 1 || gh < 1 || gw * gh > 3e6) return;
+      gcv.width = Math.ceil(gw * dpr);
+      gcv.height = Math.ceil(gh * dpr);
+      gctx.setTransform(1, 0, 0, 1, 0, 0);
+      gctx.clearRect(0, 0, gcv.width, gcv.height);
+      gctx.setTransform(view.s * dpr, 0, 0, -view.s * dpr,
+                        (view.ox - x0) * dpr, (view.oy - y0) * dpr);
+      gctx.strokeStyle = c.strokeStyle;
+      gctx.fillStyle = c.fillStyle;
+      gctx.lineCap = 'round';
+      gctx.lineJoin = 'round';
+      gctx.globalCompositeOperation = 'source-over';
+      (o.items || []).forEach(it => {
+        if (it.neg) gctx.globalCompositeOperation = 'destination-out';
+        else gctx.globalCompositeOperation = 'source-over';
+        drawObj(gctx, it, pxScale, view, dpr, true);
+      });
+      gctx.globalCompositeOperation = 'source-over';
+      c.save();
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.drawImage(gcv, Math.round(x0 * dpr), Math.round(y0 * dpr));
+      c.restore();
+      break;
+    }
+  }
+}
+
+function drawGrid(g){
+  const v = S.view, T = theme();
+  const steps = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100];
+  let step = steps.find(s => s * v.s >= 16) || 100;
+  const x0 = (0 - v.ox) / v.s, x1 = (S.W - v.ox) / v.s;
+  const yTop = v.oy / v.s, yBot = (v.oy - S.H) / v.s;
+  g.save();
+  g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
+  g.strokeStyle = T.grid; g.lineWidth = 1;
+  g.beginPath();
+  for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step){
+    const px = Math.round(v.ox + x * v.s) + 0.5;
+    g.moveTo(px, 0); g.lineTo(px, S.H);
+  }
+  for (let y = Math.ceil(yBot / step) * step; y <= yTop; y += step){
+    const py = Math.round(v.oy - y * v.s) + 0.5;
+    g.moveTo(0, py); g.lineTo(S.W, py);
+  }
+  g.stroke();
+  // 原点
+  const ox = v.ox, oy = v.oy;
+  if (ox > -40 && ox < S.W + 40 && oy > -40 && oy < S.H + 40){
+    g.strokeStyle = 'rgba(78,161,255,.55)';
+    g.beginPath();
+    g.moveTo(ox - 9, oy); g.lineTo(ox + 9, oy);
+    g.moveTo(ox, oy - 9); g.lineTo(ox, oy + 9);
+    g.stroke();
+  }
+  g.restore();
+}
+
+function drawFrame(g){
+  const b = S.summary && S.summary.bbox;
+  if (!b) return;
+  const v = S.view, T = theme();
+  g.save();
+  g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
+  g.strokeStyle = T.frame; g.lineWidth = 1; g.setLineDash([4, 4]);
+  g.strokeRect(v.ox + b[0] * v.s, v.oy - b[3] * v.s,
+               (b[2] - b[0]) * v.s, (b[3] - b[1]) * v.s);
+  g.restore();
+}
+
+function drawDrills(g){
+  const d = S.summary && S.summary.drills;
+  if (!d) return;
+  const v = S.view, T = theme(), dpr = S.dpr;
+  g.setTransform(v.s * dpr, 0, 0, -v.s * dpr, v.ox * dpr, v.oy * dpr);
+  // 槽
+  g.strokeStyle = 'rgba(242,201,76,.55)';
+  g.lineCap = 'round';
+  (d.slots || []).forEach(sl => {
+    if (!sl.p || sl.p.length < 2) return;
+    g.lineWidth = Math.max(sl.w || 0.2, 0.05);
+    g.beginPath(); g.moveTo(sl.p[0][0], sl.p[0][1]);
+    for (let i = 1; i < sl.p.length; i++) g.lineTo(sl.p[i][0], sl.p[i][1]);
+    g.stroke();
+  });
+  // 孔
+  const minR = 1.6 / v.s;
+  (d.holes || []).forEach(h => {
+    const r = Math.max(h.d / 2, minR);
+    g.beginPath(); g.arc(h.x, h.y, r, 0, TAU);
+    g.fillStyle = T.bg; g.fill();
+    g.lineWidth = Math.max(0.9 / v.s, 0.03);
+    g.strokeStyle = '#f2c94c'; g.stroke();
+  });
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function drawMeasure(g){
+  if (!S.mpts.length) return;
+  const v = S.view;
+  const toS = (p) => [v.ox + p[0] * v.s, v.oy - p[1] * v.s];
+  g.save();
+  g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
+  g.strokeStyle = '#4ea1ff'; g.fillStyle = '#4ea1ff'; g.lineWidth = 1.4;
+  const pts = S.mpts.map(toS);
+  g.beginPath();
+  g.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+  g.stroke();
+  pts.forEach(p => { g.beginPath(); g.arc(p[0], p[1], 3, 0, TAU); g.fill(); });
+  for (let i = 1; i < S.mpts.length; i++){
+    const a = S.mpts[0], b = S.mpts[i];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const L = Math.hypot(dx, dy);
+    const mid = toS([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+    const label = `${udual(L)}  (Δ${uval(dx)}, Δ${uval(dy)})`;
+    g.font = '12px "Segoe UI",sans-serif';
+    const w = g.measureText(label).width + 10;
+    g.fillStyle = 'rgba(20,30,45,.86)';
+    g.fillRect(mid[0] - w / 2, mid[1] - 26, w, 19);
+    g.fillStyle = '#9dc6ff';
+    g.fillText(label, mid[0] - w / 2 + 5, mid[1] - 12);
+  }
+  g.restore();
+}
+
+function updateHud(){
+  const v = S.view;
+  const pu = upri();
+  $('scaleInfo').textContent = S.summary
+    ? `缩放 ${(v.s * (UDEF[pu] || UDEF.mm).f).toFixed(pu === 'mm' ? 1 : 2)} px/${uname(pu)}`
+    : '';
+  const hud = $('hud');
+  if (!S.summary){ hud.textContent = ''; return; }
+  const a = S.summary.analysis || {};
+  let size = '';
+  if (a.board_size){
+    const w = a.board_size.w, h = a.board_size.h;
+    size = U === 'both'
+      ? `${uval(w,'mm',2)} × ${uval(h,'mm',2)} mm · ${uval(w,'mil',1)} × ${uval(h,'mil',1)} mil`
+      : `${uval(w,null,2)} × ${uval(h,null,2)} ${uname()}`;
+  }
+  hud.innerHTML = `<b>${esc(S.summary.name)}</b> <span class="pill">${(S.summary.format||'').toUpperCase()}</span><br>` +
+    `${size} · ${a.layer_count || 0} 层 · ${fmtN(a.total_objects)} 图元` +
+    (S.measure ? '<br><span style="color:#4ea1ff">测距模式：点击两点（Esc 清除）</span>' : '');
+}
+
+/* ---------------- 定位（坐标跳转 / 光标跟随） ---------------- */
+const UNIT_NAME = {'1': 'mm', '25.4': 'inch', '0.0254': 'mil'};  /* 定位输入框用 */
+
+function centerOn(wx, wy, zoom){
+  const v = S.view;
+  if (zoom) v.s = Math.max(0.02, Math.min(4000, zoom));
+  v.ox = S.W / 2 - wx * v.s;
+  v.oy = S.H / 2 + wy * v.s;
+}
+
+function gotoXY(wx, wy, opt){
+  opt = opt || {};
+  S.target = {x: wx, y: wy, label: opt.label || ''};
+  if (opt.select != null) S.selComp = opt.select;
+  centerOn(wx, wy, opt.zoom || S.view.s);
+  render();
+  updateGotoInfo();
+}
+
+function updateGotoInfo(){
+  const t = S.target, info = $('gotoInfo');
+  if (!info) return;
+  if (!t){
+    info.textContent = '输入坐标回车跳转；也可点「取点」在图上取（当前单位 ' +
+      (U === 'both' ? 'mm / mil' : uname()) + '）';
+    return;
+  }
+  const p = upri(), o = p === 'mm' ? 'mil' : 'mm';
+  let txt = 'X ' + uval(t.x, p) + '　Y ' + uval(t.y, p) + ' ' + uname(p);
+  if (U !== 'both'){
+    txt += ' <span style="opacity:.6">(' + uval(t.x, o) + ', ' + uval(t.y, o) + ' ' + uname(o) + ')</span>';
+  }
+  info.innerHTML = (t.label ? '<b>' + esc(t.label) + '</b> · ' : '') + txt;
+}
+
+function setGotoInputs(wx, wy){
+  const f = parseFloat($('gunit').value) || 1;
+  $('gx').value = (wx / f).toFixed(3);
+  $('gy').value = (wy / f).toFixed(3);
+}
+
+function doGoto(){
+  const f = parseFloat($('gunit').value) || 1;
+  const x = parseFloat($('gx').value), y = parseFloat($('gy').value);
+  if (!isFinite(x) || !isFinite(y)){ status('请输入 X / Y 坐标', 'err'); return; }
+  gotoXY(x * f, y * f);
+  status('已定位到 X ' + uval(x * f) + '  Y ' + uval(y * f) + ' ' + uname(), 'ok');
+}
+
+/* ---------------- 元件 / XY 数据 ---------------- */
+const COMP_STATUS_CN = {ok: '正常', offset: '坐标偏差', wrong_side: '面别不符', no_pad: '无焊盘', outside: '超出板框'};
+const COMP_COLOR = {ok: '#2f9e6b', offset: '#e0a01e', wrong_side: '#e0a01e', no_pad: '#e04343', outside: '#c8489c'};
+
+function currentComps(){
+  if (S.compView === 'xy' && (S.xyComps || []).length) return S.xyComps;
+  return S.boardComps || [];
+}
+function currentCheck(){
+  if (S.compView === 'xy' && S.xy) return S.xy.check || null;
+  return null;
+}
+function compRecords(){
+  const m = {}, c = currentCheck();
+  if (c && c.entries) c.entries.forEach(r => { m[r.ref] = r; });
+  return m;
+}
+
+function setBoardComps(list){
+  S.boardComps = (list || []).map(c => ({
+    ref: c.ref || '', x: Number(c.x) || 0, y: Number(c.y) || 0,
+    side: c.side || '', rot: c.rot, package: c.package || c.part || '', value: c.value || ''
+  }));
+  if (!(S.xyComps || []).length) S.compView = 'board';
+  S.selComp = -1;
+  buildCompBox();
+}
+
+async function refreshXY(){
+  try{
+    const d = await api('/api/xy');
+    if (d && d.loaded){ applyXY(d); }
+    else { S.xy = null; S.xyComps = []; buildCompBox(); }
+  } catch(e){ /* 忽略 */ }
+}
+
+function applyXY(d){
+  S.xy = d || {};
+  S.xyOpts = (d && d.opts) || S.xyOpts || {};
+  S.xyComps = ((d && d.entries) || []).map(e => ({
+    ref: e.ref, x: Number(e.x) || 0, y: Number(e.y) || 0, side: e.side || '',
+    rot: e.rot, package: e.package || '', value: e.value || ''
+  }));
+  if (S.xyComps.length) S.compView = 'xy';
+  S.selComp = -1;
+  buildCompBox();
+  render();
+}
+
+function buildCompBox(){
+  const box = $('compBox');
+  if (!box) return;
+  if (!box.dataset.ready){
+    box.innerHTML = '<div id="compHead"></div>' +
+      '<input id="compSearch" class="compsearch" spellcheck="false" placeholder="搜索位号…">' +
+      '<div id="compList" class="comps"></div>';
+    box.dataset.ready = '1';
+    $('compSearch').addEventListener('input', () => {
+      S.compFilter = $('compSearch').value;
+      renderCompList();
+    });
+  }
+  const n = currentComps().length;
+  $('compSearch').style.display = n ? '' : 'none';
+  renderCompHead();
+  renderCompList();
+}
+
+function renderCompHead(){
+  const head = $('compHead');
+  if (!head) return;
+  const n = currentComps().length;
+  if (!n){
+    head.innerHTML = '<div class="empty">点「导入…」选贴片坐标 / 元件坐标文件' +
+      '<br>csv、txt、pos 均可，自动识别列名、单位与所在面</div>';
+    return;
+  }
+  let tabs = '';
+  if ((S.xyComps || []).length && (S.boardComps || []).length){
+    tabs = '<div class="tabs">' +
+      '<span class="tab' + (S.compView === 'xy' ? ' on' : '') + '" data-v="xy">XY ' + S.xyComps.length + '</span>' +
+      '<span class="tab' + (S.compView === 'board' ? ' on' : '') + '" data-v="board">板上 ' + S.boardComps.length + '</span>' +
+      '</div>';
+  }
+  const c = currentCheck();
+  let chips = '';
+  if (c){
+    const s = c.stats || {};
+    [['ok', '正常'], ['offset', '偏差'], ['wrong_side', '面别'], ['no_pad', '无焊盘'], ['outside', '越界']]
+      .forEach(pair => {
+        const v = s[pair[0]] || 0;
+        if (!v) return;
+        const cls = pair[0] === 'ok' ? 'ok' : (pair[0] === 'no_pad' || pair[0] === 'outside' ? 'err' : 'warn');
+        chips += '<span class="chip ' + cls + '">' + pair[1] + ' ' + v + '</span>';
+      });
+    if (c.board_only_count) chips += '<span class="chip warn">板上多 ' + c.board_only_count + '</span>';
+  }
+  const off = c && c.max_offset ? ' · 最大偏差 ' + udual(c.max_offset) : '';
+  head.innerHTML = tabs +
+    (chips ? '<div class="csum">' + chips + '</div>' : '') +
+    '<div class="chead">共 ' + n + ' 个' + off + ' <span style="opacity:.6">点条目定位</span></div>' +
+    alignRow();
+  Array.prototype.forEach.call(head.querySelectorAll('.tab'), el => {
+    el.addEventListener('click', () => {
+      S.compView = el.dataset.v;
+      S.selComp = -1;
+      buildCompBox();
+      render();
+    });
+  });
+  bindAlignRow(head);
+}
+
+/* XY 对齐参数：自动判断错了可以手工覆盖 */
+function alignRow(){
+  const d = S.xy;
+  if (!d || !(S.xyComps || []).length) return '';
+  const opt = (v, cur, txt) => '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + txt + '</option>';
+  const unit = d.unit_factor === 1 ? 'mm' : (d.unit_factor === 25.4 ? 'inch' : (d.unit_factor === 0.0254 ? 'mil' : 'mm'));
+  const o = (S.xyOpts || {});
+  const uu = o.units || 'auto', yy = o.yflip === true ? '1' : (o.yflip === false ? '0' : 'auto');
+  const tu = U === 'both' ? 'mm' : uname();
+  const tstep = upri() === 'mm' ? '0.05' : (upri() === 'mil' ? '2' : '0.002');
+  const tmin = upri() === 'mm' ? '0.01' : (upri() === 'mil' ? '0.4' : '0.0004');
+  return '<div class="alignrow">' +
+    '<label>单位<select class="al" data-k="units">' +
+      opt('auto', uu, '自动') + opt('mm', uu, 'mm') + opt('inch', uu, 'inch') + opt('mil', uu, 'mil') +
+    '</select></label>' +
+    '<label>Y 方向<select class="al" data-k="yflip">' +
+      opt('auto', yy, '自动') + opt('0', yy, '正常') + opt('1', yy, '镜像') +
+    '</select></label>' +
+    '<label>容差(' + tu + ')<input class="al tin" data-k="tol" type="number" step="' + tstep + '" min="' + tmin + '" value="' +
+      uval(o.tol != null ? o.tol : 0.2, null) + '"></label>' +
+    '<span class="alignhint">' + (unit === 'mm' ? '' : '已按 ' + unit + ' 换算了 ') +
+      (d.yflip ? '· Y 已镜像' : '') + '</span>' +
+    '</div>';
+}
+
+function bindAlignRow(root){
+  const box = (root || document).querySelector('.alignrow');
+  if (!box) return;
+  Array.prototype.forEach.call(box.querySelectorAll('.al'), el => {
+    el.addEventListener('change', () => reapplyXY());
+  });
+}
+
+async function reapplyXY(override){
+  if (!S.xy || !S.xy.path){ return; }
+  const o = Object.assign({}, S.xyOpts || {}, override || {});
+  if (!override){
+    const box = document.querySelector('.alignrow');
+    if (box){
+      Array.prototype.forEach.call(box.querySelectorAll('.al'), el => {
+        const k = el.dataset.k;
+        let v = el.value;
+        if (k === 'yflip') v = v === 'auto' ? 'auto' : (v === '1');
+        else if (k === 'tol'){
+          const t = parseFloat(v);
+          v = (isFinite(t) && t > 0 ? t : 0.2) * u2mm();
+        }
+        o[k] = v;
+      });
+    }
+  }
+  S.xyOpts = o;
+  loading(true, '重新对齐…');
+  try{
+    const d = await api('/api/xy', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({path: S.xy.path}, o))
+    });
+    applyXY(d);
+    const c = d.check || {}, st = c.stats || {};
+    status('已重新对齐：单位 ' + d.units + (d.yflip ? '（Y 镜像）' : '') +
+      '，正常 ' + (st.ok || 0) + ' / 共 ' + (c.total || 0), 'ok');
+  } catch(e){
+    status(e.message, 'err');
+  } finally {
+    loading(false);
+  }
+}
+
+function renderCompList(){
+  const box = $('compList');
+  if (!box) return;
+  const list = currentComps();
+  const rec = compRecords();
+  const q = String(S.compFilter || '').trim().toLowerCase();
+  const rows = [];
+  list.forEach((c, i) => {
+    if (q && String(c.ref).toLowerCase().indexOf(q) < 0) return;
+    rows.push([i, c]);
+  });
+  if (!rows.length){
+    box.innerHTML = '<div class="empty">没有匹配的位号</div>';
+    return;
+  }
+  const cap = 300;
+  const html = rows.slice(0, cap).map(item => {
+    const i = item[0], c = item[1], r = rec[c.ref];
+    const st = r ? r.status : '';
+    const side = c.side === 'bottom' ? 'B' : (c.side === 'top' ? 'T' : '·');
+    const tip = (c.ref || '') + ' ' + (c.package || '') + ' ' + (c.value || '') +
+      ' · X ' + udual(c.x, 2) + '　Y ' + udual(c.y, 2) +
+      (r && r.note ? ' · ' + r.note : '');
+    return '<div class="comp' + (i === S.selComp ? ' sel' : '') + '" data-i="' + i + '" title="' + esc(tip) + '">' +
+      '<b>' + esc(c.ref) + '</b>' +
+      '<span class="cs' + (c.side === 'bottom' ? ' b' : '') + '">' + side + '</span>' +
+      '<span class="xy">' + ucoord(c.x) + ', ' + ucoord(c.y) + '</span>' +
+      '<span class="st ' + st + '"></span>' +
+      '</div>';
+  }).join('');
+  box.innerHTML = html + (rows.length > cap
+    ? '<div class="empty">另有 ' + (rows.length - cap) + ' 条，输入位号过滤</div>' : '');
+  Array.prototype.forEach.call(box.querySelectorAll('.comp'), el => {
+    el.addEventListener('click', () => {
+      const i = parseInt(el.dataset.i, 10);
+      const c = list[i];
+      if (!c) return;
+      gotoXY(c.x, c.y, {label: c.ref, select: i, zoom: Math.max(S.view.s, 10)});
+      renderCompList();
+      status(c.ref + '　X ' + uval(c.x) + '　Y ' + uval(c.y) + ' ' + uname(), 'ok');
+    });
+  });
+}
+
+async function pickLoadXY(p){
+  pickerClose();
+  if (!p) return;
+  loading(true, '解析 XY 数据…');
+  try{
+    const d = await api('/api/xy', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: p})
+    });
+    applyXY(d);
+    const c = d.check || {};
+    const s = c.stats || {};
+    status('已导入 XY：' + d.name + '（' + d.count + ' 个，单位 ' + d.units + '）' +
+      (c.total ? '，正常 ' + (s.ok || 0) + ' / 异常 ' + ((c.total || 0) - (s.ok || 0)) : ''), 'ok');
+  } catch(e){
+    status(e.message, 'err');
+  } finally {
+    loading(false);
+  }
+}
+
+function exportCompsCsv(source){
+  if (source === 'xy'){
+    if (!(S.xyComps || []).length){ status('还没有导入 XY 数据', 'err'); return; }
+  } else if (!S.summary){
+    status('请先加载板子资料', 'err'); return;
+  }
+  const a = document.createElement('a');
+  a.href = '/api/export/components?source=' + encodeURIComponent(source) +
+    '&units=' + encodeURIComponent(U) + '&t=' + Date.now();
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { if (a.remove) a.remove(); }, 0);
+  status('已导出 CSV（' + (source === 'xy' ? 'XY 元件' : '板上器件') + '）', 'ok');
+}
+
+function drawComps(g){
+  const list = currentComps();
+  if (!list.length || !S.showComp) return;
+  const v = S.view, dpr = S.dpr, rec = compRecords();
+  const lab = list.length <= 140 || v.s >= 6;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.save();
+  g.font = '10px ui-monospace, Consolas, monospace';
+  g.textAlign = 'center';
+  for (let i = 0; i < list.length; i++){
+    const c = list[i];
+    const px = v.ox + c.x * v.s, py = v.oy - c.y * v.s;
+    if (px < -40 || py < -40 || px > S.W + 40 || py > S.H + 40) continue;
+    const r = rec[c.ref];
+    const color = (r && COMP_COLOR[r.status]) || '#8fa3ba';
+    const big = i === S.selComp;
+    const rad = big ? 10 : 4;
+    g.strokeStyle = color;
+    g.fillStyle = color;
+    g.lineWidth = big ? 1.8 : 1.2;
+    g.beginPath();
+    g.moveTo(px - rad, py); g.lineTo(px + rad, py);
+    g.moveTo(px, py - rad); g.lineTo(px, py + rad);
+    g.stroke();
+    if (big){
+      g.beginPath(); g.arc(px, py, rad + 5, 0, TAU); g.stroke();
+    }
+    if (lab || big){
+      g.font = big ? 'bold 11px ui-monospace, Consolas, monospace' : '10px ui-monospace, Consolas, monospace';
+      g.strokeStyle = 'rgba(0,0,0,.55)';
+      g.lineWidth = 3;
+      g.strokeText(c.ref, px, py - rad - 4);
+      g.fillStyle = big ? '#ffffff' : color;
+      g.fillText(c.ref, px, py - rad - 4);
+      g.strokeStyle = color;
+    }
+  }
+  g.restore();
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function drawTarget(g){
+  const t = S.target;
+  if (!t) return;
+  const v = S.view, dpr = S.dpr;
+  const px = v.ox + t.x * v.s, py = v.oy - t.y * v.s;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.save();
+  g.strokeStyle = 'rgba(78,161,255,.42)';
+  g.lineWidth = 1;
+  g.setLineDash([5, 6]);
+  g.beginPath();
+  g.moveTo(0, py); g.lineTo(S.W, py);
+  g.moveTo(px, 0); g.lineTo(px, S.H);
+  g.stroke();
+  g.setLineDash([]);
+  g.strokeStyle = '#4ea1ff';
+  g.lineWidth = 1.6;
+  g.beginPath(); g.arc(px, py, 11, 0, TAU); g.stroke();
+  g.beginPath(); g.arc(px, py, 2.4, 0, TAU);
+  g.fillStyle = '#4ea1ff'; g.fill();
+
+  const label = (t.label ? t.label + '  ' : '') +
+    (U === 'both'
+      ? `${uval(t.x,'mm')} / ${uval(t.x,'mil')}, ${uval(t.y,'mm')} / ${uval(t.y,'mil')} mm/mil`
+      : `${uval(t.x)}, ${uval(t.y)} ${uname()}`);
+  g.font = '11px ui-monospace, Consolas, monospace';
+  const w = g.measureText(label).width + 12;
+  const lx = Math.min(Math.max(px + 15, 4), Math.max(4, S.W - w - 4));
+  const ly = Math.min(Math.max(py - 28, 4), Math.max(4, S.H - 22));
+  g.fillStyle = 'rgba(8,14,22,.8)';
+  g.fillRect(lx, ly, w, 19);
+  g.strokeStyle = 'rgba(78,161,255,.6)';
+  g.lineWidth = 1;
+  g.strokeRect(lx + .5, ly + .5, w - 1, 18);
+  g.fillStyle = '#cfe3ff';
+  g.textAlign = 'left';
+  g.textBaseline = 'middle';
+  g.fillText(label, lx + 6, ly + 10);
+  g.textAlign = 'center';
+  g.textBaseline = 'alphabetic';
+  g.restore();
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+/* ---------------- 交互 ---------------- */
+cv.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(cv);
+
+cv.addEventListener('pointerdown', (e) => {
+  cv.setPointerCapture(e.pointerId);
+  S.dragging = true; S.moved = false;
+  S.last = {x: e.clientX, y: e.clientY};
+});
+cv.addEventListener('pointermove', (e) => {
+  const rect = cv.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const v = S.view;
+  const wx = (mx - v.ox) / v.s, wy = (v.oy - my) / v.s;
+  S.cursor = [wx, wy];
+  $('coords').textContent = coordText(wx, wy, S.target);
+  if (S.follow && !S.dragging){
+    v.ox = S.W / 2 - wx * v.s;
+    v.oy = S.H / 2 + wy * v.s;
+    if (!S._followPending){
+      S._followPending = true;
+      requestAnimationFrame(() => { S._followPending = false; render(); });
+    }
+    return;
+  }
+  if (S.dragging && S.last){
+    const dx = e.clientX - S.last.x, dy = e.clientY - S.last.y;
+    if (Math.abs(dx) + Math.abs(dy) > 2) S.moved = true;
+    if (S.moved){
+      v.ox += dx; v.oy += dy;
+      S.last = {x: e.clientX, y: e.clientY};
+      render();
+    }
+  }
+});
+cv.addEventListener('pointerup', (e) => {
+  if (S.dragging && !S.moved && S.pickPt && e.button === 0 && S.cursor){
+    setGotoInputs(S.cursor[0], S.cursor[1]);
+    gotoXY(S.cursor[0], S.cursor[1]);
+    S.pickPt = false;
+    const b = $('btnPickPt');
+    if (b && b.classList) b.classList.remove('on');
+    status('已取点 X ' + uval(S.cursor[0]) + '　Y ' + uval(S.cursor[1]) + ' ' + uname(), 'ok');
+    S.dragging = false;
+    return;
+  }
+  if (S.dragging && !S.moved && S.measure && e.button === 0){
+    if (S.cursor){
+      if (S.mpts.length >= 2) S.mpts = [];
+      S.mpts.push(S.cursor);
+      render();
+    }
+  }
+  S.dragging = false;
+});
+cv.addEventListener('pointerleave', () => { S.dragging = false; });
+
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = cv.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const v = S.view;
+  const wx = (mx - v.ox) / v.s, wy = (v.oy - my) / v.s;
+  const factor = Math.exp(-e.deltaY * 0.0014);
+  const ns = Math.max(0.02, Math.min(4000, v.s * factor));
+  v.s = ns;
+  v.ox = mx - wx * ns;
+  v.oy = my + wy * ns;
+  render();
+}, {passive: false});
+
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+document.addEventListener('keydown', (e) => {
+  if (pickerVisible() && e.key === 'Escape'){ pickerClose(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o'){ e.preventDefault(); pickerOpen(); return; }
+  if (e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (k === 'f'){ fitView(); render(); }
+  else if (k === 'g'){ toggle('grid'); }
+  else if (k === 'm'){ toggle('measure'); }
+  else if (k === 'c'){ S.showComp = !S.showComp; render(); status('元件标记' + (S.showComp ? '显示' : '隐藏')); }
+  else if (k === 'u'){ const cyc = ['mm', 'mil', 'inch', 'both']; setUnit(cyc[(cyc.indexOf(U) + 1) % cyc.length]); }
+  else if (k === '+' || k === '='){ zoomCenter(1.25); }
+  else if (k === '-'){ zoomCenter(1/1.25); }
+  else if (k === 'escape'){ S.mpts = []; render(); }
+});
+
+function zoomCenter(f){
+  const v = S.view;
+  const wx = (S.W / 2 - v.ox) / v.s, wy = (v.oy - S.H / 2) / v.s;
+  v.s = Math.max(0.02, Math.min(4000, v.s * f));
+  v.ox = S.W / 2 - wx * v.s;
+  v.oy = S.H / 2 + wy * v.s;
+  render();
+}
+
+function toggle(what){
+  if (what === 'grid'){
+    S.grid = !S.grid;
+    document.querySelector('[data-act="grid"]').classList.toggle('on', S.grid);
+  } else if (what === 'measure'){
+    S.measure = !S.measure;
+    S.mpts = [];
+    document.querySelector('[data-act="measure"]').classList.toggle('on', S.measure);
+    cv.style.cursor = S.measure ? 'crosshair' : 'default';
+  }
+  render();
+}
+
+document.querySelectorAll('.tools button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const act = btn.dataset.act;
+    if (act === 'fit'){ fitView(); render(); }
+    else if (act === 'zin') zoomCenter(1.35);
+    else if (act === 'zout') zoomCenter(1/1.35);
+    else if (act === 'grid' || act === 'measure') toggle(act);
+    else if (act === 'theme'){
+      document.body.classList.toggle('light');
+      btn.classList.toggle('on', document.body.classList.contains('light'));
+      render();
+    }
+    else if (act === 'png') exportPNG();
+    else if (act === 'svg') exportSVG();
+    else if (act === 'report') downloadReport();
+  });
+});
+
+$('allOn').addEventListener('click', () => { S.vis = S.vis.map(() => true); buildLayerList(); render(); });
+$('allOff').addEventListener('click', () => { S.vis = S.vis.map(() => false); buildLayerList(); render(); });
+$('btnLoad').addEventListener('click', () => loadPath($('path').value));
+$('path').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadPath($('path').value); });
+$('btnSample').addEventListener('click', () => {
+  const order = ['gerber', 'odb', 'inch'];
+  const i = order.indexOf(S.sampleName || 'gerber');
+  loadSample(order[(i + 1) % order.length]);
+});
+
+/* 定位 / 元件 绑定 */
+$('btnGo').addEventListener('click', doGoto);
+['gx', 'gy'].forEach(id => {
+  $(id).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter'){ e.preventDefault(); doGoto(); }
+  });
+});
+$('gunit').addEventListener('change', () => {
+  if (S.target){ setGotoInputs(S.target.x, S.target.y); updateGotoInfo(); }
+});
+$('btnGotoClear').addEventListener('click', () => {
+  S.target = null;
+  $('gx').value = ''; $('gy').value = '';
+  render(); updateGotoInfo();
+});
+$('btnPickPt').addEventListener('click', () => {
+  S.pickPt = !S.pickPt;
+  const b = $('btnPickPt');
+  if (b && b.classList) b.classList.toggle('on', S.pickPt);
+  status(S.pickPt ? '在图上点一下取坐标' : '');
+});
+$('follow').addEventListener('change', () => {
+  S.follow = !!$('follow').checked;
+  if (S.follow) status('跟随光标：移动鼠标即平移视图', 'ok');
+});
+$('btnXyImport').addEventListener('click', () => {
+  pickerOpen(String($('path').value || '').trim(), 'xy');
+});
+$('btnCompCsv').addEventListener('click', () => {
+  exportCompsCsv(S.compView === 'xy' ? 'xy' : 'board');
+});
+$('unitSel').addEventListener('change', () => setUnit($('unitSel').value));
+
+/* ---------------- 导出 ---------------- */
+function downloadBlob(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+function exportPNG(){
+  if (!S.summary) { status('请先加载资料', 'err'); return; }
+  cv.toBlob(b => {
+    downloadBlob(b, (S.summary.name || 'board') + '.png');
+    status('PNG 已导出', 'ok');
+  }, 'image/png');
+}
+
+function exportSVG(){
+  if (!S.summary) { status('请先加载资料', 'err'); return; }
+  const v = S.view;
+  const wmm = S.W / v.s, hmm = S.H / v.s;
+  const x0 = -v.ox / v.s, yTop = v.oy / v.s;
+  const out = [];
+  out.push(`<?xml version="1.0" encoding="UTF-8"?>`);
+  out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${wmm.toFixed(3)}mm" height="${hmm.toFixed(3)}mm" viewBox="0 0 ${wmm.toFixed(3)} ${hmm.toFixed(3)}">`);
+  out.push(`<!-- PCB-CAM export; 负极性图元已省略 -->`);
+  out.push(`<g transform="translate(${(-x0).toFixed(3)},${yTop.toFixed(3)}) scale(1,-1)">`);
+  S.summary.layers.forEach((l, i) => {
+    if (!S.vis[i] || !S.objs[i]) return;
+    out.push(`<g fill="${l.color}" stroke="${l.color}" stroke-linecap="round" stroke-linejoin="round" opacity="${S.opa[i]}">`);
+    S.objs[i].forEach(o => {
+      if (o.neg) return;
+      if (o.t === 'path' && o.p && o.p.length > 1){
+        const d = o.p.map((p, k) => (k ? 'L' : 'M') + p[0].toFixed(3) + ' ' + p[1].toFixed(3)).join(' ');
+        out.push(`<path d="${d}" fill="none" stroke-width="${Math.max(o.w, 0.01).toFixed(3)}"/>`);
+      } else if (o.t === 'poly' && o.p && o.p.length > 2){
+        out.push(`<path d="M${o.p.map(p => p[0].toFixed(3) + ' ' + p[1].toFixed(3)).join(' L')} Z"/>`);
+      } else if (o.t === 'circle'){
+        out.push(`<circle cx="${o.c[0].toFixed(3)}" cy="${o.c[1].toFixed(3)}" r="${o.r.toFixed(3)}"/>`);
+      } else if (o.t === 'ring'){
+        out.push(`<circle cx="${o.c[0].toFixed(3)}" cy="${o.c[1].toFixed(3)}" r="${o.r.toFixed(3)}" fill="none" stroke-width="${(o.r - o.ri).toFixed(3)}"/>`);
+      } else if (o.t === 'poly2' && o.out){
+        out.push(`<path d="M${o.out.map(p => p[0].toFixed(3) + ' ' + p[1].toFixed(3)).join(' L')} Z"/>`);
+      }
+    });
+    out.push(`</g>`);
+  });
+  out.push(`</g></svg>`);
+  downloadBlob(new Blob([out.join('\n')], {type: 'image/svg+xml'}), (S.summary.name || 'board') + '.svg');
+  status('SVG 已导出（简化，负极性省略）', 'ok');
+}
+
+function downloadReport(){
+  if (!S.summary) { status('请先加载资料', 'err'); return; }
+  location.href = '/api/report?download=1&units=' + encodeURIComponent(U);
+  status('报告生成中…', 'ok');
+}
+
+/* ---------------- 启动 ---------------- */
+window.addEventListener('resize', resize);
+resize();
+$('unitSel').value = U;
+syncGotoUnit();
+updateGotoInfo();
+loadSample('gerber');
+</script>
+</body>
+</html>

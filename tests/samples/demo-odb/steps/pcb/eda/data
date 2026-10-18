@@ -1,0 +1,41 @@
+H optimize N staggered N
+UNITS=MM
+$0 $NONE$
+$1 GND
+$2 VCC
+$3 SIG1
+$4 SIG2
+$5 SIG3
+$6 SIG4
+1 0.45 12.000 30.000 T m e staggered 0 0 0
+3 0.45 8.000 30.000 B m e staggered 0 0 0
+1 0.45 12.000 22.000 T m e staggered 0 0 0
+4 0.45 8.000 22.000 B m e staggered 0 0 0
+1 0.45 12.000 14.000 T m e staggered 0 0 0
+5 0.45 8.000 14.000 B m e staggered 0 0 0
+1 0.45 12.000 6.000 T m e staggered 0 0 0
+6 0.45 8.000 6.000 B m e staggered 0 0 0
+3 0.35 17.000 5.555 T m e staggered 0 0 0
+2 0.35 23.000 5.555 T m e staggered 0 0 0
+4 0.35 17.000 6.825 T m e staggered 0 0 0
+1 0.35 23.000 6.825 T m e staggered 0 0 0
+5 0.35 17.000 8.095 T m e staggered 0 0 0
+2 0.35 23.000 8.095 T m e staggered 0 0 0
+6 0.35 17.000 9.365 T m e staggered 0 0 0
+1 0.35 23.000 9.365 T m e staggered 0 0 0
+3 0.35 17.000 10.635 T m e staggered 0 0 0
+2 0.35 23.000 10.635 T m e staggered 0 0 0
+4 0.35 17.000 11.905 T m e staggered 0 0 0
+1 0.35 23.000 11.905 T m e staggered 0 0 0
+5 0.35 17.000 13.175 T m e staggered 0 0 0
+2 0.35 23.000 13.175 T m e staggered 0 0 0
+6 0.35 17.000 14.445 T m e staggered 0 0 0
+1 0.35 23.000 14.445 T m e staggered 0 0 0
+1 0.5 4.000 4.000 T m e staggered 0 0 0
+1 0.5 56.000 4.000 T m e staggered 0 0 0
+1 0.5 4.000 36.000 T m e staggered 0 0 0
+1 0.5 56.000 36.000 T m e staggered 0 0 0
+1 0.3 50.000 14.000 B m e staggered 0 0 0 v
+1 0.3 50.000 26.000 B m e staggered 0 0 0 v
+1 0.3 34.000 30.000 B m e staggered 0 0 0 v
+1 0.3 34.000 6.000 B m e staggered 0 0 0 v

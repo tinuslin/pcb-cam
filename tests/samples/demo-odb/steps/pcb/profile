@@ -1,0 +1,7 @@
+UNITS=MM
+OB 0 0
+OC 60 0
+OC 60 40
+OC 0 40
+OE
+SE
