@@ -1,5 +1,10 @@
 # PCB-CAM · PCB 制造资料读取与分析工具
 
+[![CI](https://github.com/tinuslin/pcb-cam/actions/workflows/ci.yml/badge.svg)](https://github.com/tinuslin/pcb-cam/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.8%2B-3776ab.svg)](https://www.python.org/)
+[![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#)
+
 纯 Python 标准库实现的 PCB CAM 工具，用来**读 gerber / ODB++ 等生产资料并做工程分析**，
 界面与工作流对标 CAM350 的"看图层 + 量尺寸 + 查最小线宽/环宽 + 出报告"。
 

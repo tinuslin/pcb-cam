@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: py${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.8", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 生成演示资料
+        run: python tests/make_samples.py
+
+      - name: 解析与工程分析自测
+        run: python tests/selftest.py
+
+      - name: 启动本地服务
+        run: |
+          python -m pcb_cam.server --port 8790 &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:8790/api/state >/dev/null && exit 0
+            sleep 0.5
+          done
+          echo "server failed to start"; exit 1
+
+      - name: 前端无头冒烟（Gerber）
+        run: |
+          node tests/ui_smoke.js static/index.html http://127.0.0.1:8790 > /tmp/ui-gerber.json
+          python tests/ui_report.py /tmp/ui-gerber.json
+
+      - name: 前端无头冒烟（ODB++）
+        env:
+          PCB_SAMPLE: odb
+        run: |
+          node tests/ui_smoke.js static/index.html http://127.0.0.1:8790 > /tmp/ui-odb.json
+          python tests/ui_report.py /tmp/ui-odb.json
+
+      - name: 前端无头冒烟（英制）
+        env:
+          PCB_SAMPLE: inch
+        run: |
+          node tests/ui_smoke.js static/index.html http://127.0.0.1:8790 > /tmp/ui-inch.json
+          python tests/ui_report.py /tmp/ui-inch.json
+
+      - name: 命令行 PNG 预览
+        run: python -m pcb_cam.preview tests/samples/demo-gerber -o /tmp/preview.png -w 800

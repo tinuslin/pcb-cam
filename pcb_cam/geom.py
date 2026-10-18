@@ -15,7 +15,7 @@ TWO_PI = 2.0 * math.pi
 # --------------------------------------------------------------------------- #
 # 基础变换
 # --------------------------------------------------------------------------- #
-def rot(px: float, py: float, deg: float) -> tuple[float, float]:
+def rot(px: float, py: float, deg: float):
     """绕原点旋转（角度制，逆时针为正）。"""
     if not deg:
         return px, py
@@ -24,7 +24,7 @@ def rot(px: float, py: float, deg: float) -> tuple[float, float]:
     return px * ca - py * sa, px * sa + py * ca
 
 
-def rot_about(px: float, py: float, cx: float, cy: float, deg: float) -> tuple[float, float]:
+def rot_about(px: float, py: float, cx: float, cy: float, deg: float):
     if not deg:
         return px, py
     a = math.radians(deg)

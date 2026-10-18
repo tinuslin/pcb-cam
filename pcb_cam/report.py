@@ -76,7 +76,7 @@ def _short_path(path):
     return path if rel.startswith("..") else rel.replace("\\", "/")
 
 
-def build_report(board, extra: dict | None = None) -> str:
+def build_report(board, extra=None):
     s = extra or {}
     F = _Fmt(s.get("units") or "both")
     a = board.analysis or {}
