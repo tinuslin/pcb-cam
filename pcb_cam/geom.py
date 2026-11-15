@@ -195,6 +195,13 @@ def obj_bbox(obj):
     if t == "group":
         b = obj.get("b")
         return tuple(b) if b else None
+    if t == "text":
+        # 文字没有真实轮廓，给一个按字高/字数估算的包围盒（用于自动全览与合并板框）
+        x, y = obj.get("p") or (0.0, 0.0)
+        h = max(float(obj.get("h") or 1.0), 0.05)
+        s = str(obj.get("s") or "")
+        w = max(h * 0.6, h * 0.62 * len(s))
+        return (x, y - h * 0.25, x + w, y + h * 0.85)
     return None
 
 

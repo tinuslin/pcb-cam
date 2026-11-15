@@ -5,8 +5,8 @@
 [![Python](https://img.shields.io/badge/python-3.8%2B-3776ab.svg)](https://www.python.org/)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#)
 
-纯 Python 标准库实现的 PCB CAM 工具，用来**读 gerber / ODB++ 等生产资料并做工程分析**，
-界面与工作流对标 CAM350 的"看图层 + 量尺寸 + 查最小线宽/环宽 + 出报告"。
+纯 Python 标准库实现的 PCB CAM 工具，用来**读 Gerber / ODB++ / DXF 等生产资料并做工程分析**：
+看图层、量尺寸、查最小线宽/环宽、核贴片坐标、出报告。
 
 - **零第三方依赖**：只用 Python 标准库（`http.server` + 自研光栅器 + 手写 PNG 编码），拷过去就能跑
 - **本地 Web 界面**：浏览器里看板、切图层、调透明度、缩放平移、测距、导出；内置**本机文件浏览器**，选文件夹/单文件不用敲路径
@@ -34,8 +34,31 @@
 | **Excellon 钻孔** | `.drl/.drd/.xln/.nc/.tap/…` | `M48` 文件头、`INCH/METRIC`、`M71/M72`、`;FILE_FORMAT=2:4`、刀具表（`C0.035` / `F00S00C0.800`）、前零/后零省略**自适应择优**、`G81/G82/G83` 钻孔、`G85` 槽、`G00` 快速定位与 `M15/M16` 铣槽、镀通推断 |
 | **ODB++** | 目录 / `.tgz` / `.zip` 三种载体 | `matrix/matrix` 层序与类型、`steps/<step>/layers/<layer>/features`（P/L/A/S 记录 + `OB/OC/OS/OE/SE` 曲面）、标准符号（`r/s/rect/oval/el/di/oct/tri/hole`）与自定义符号、`profile` 板框、`eda/data` 网表、`components/components` 器件、`attrlist` 属性 |
 | **IPC-D-356(A)** | `.ipc/.356` | `P UNITS`、`317/327/127` 测试点、`D####P/U` 孔径与镀通、`A0x` 测试面、焊盘尺寸 / 旋转 / 阻焊标记、定宽与空格混合写法容错 |
+| **DXF（CAD 图纸）** | `.dxf`（ASCII / R12 以上） | `LINE / CIRCLE / ARC / ELLIPSE / LWPOLYLINE`（含 bulge 弧）/ `POLYLINE+VERTEX / POINT / SOLID / 3DFACE / TEXT / MTEXT / INSERT`（块展开与矩形阵列）/ `DIMENSION / HATCH / SPLINE / LEADER`；`$INSUNITS` 16 种单位自动折算 mm；按 CAD 图层名自动配层，也可**手动改类型** |
+| **DWG** | `.dwg` | 二进制格式，纯标准库不能直接解码；见下方「DWG 导入」一节（本机转换器 / 另存为 DXF） |
 
 资料可以是**单文件**、**一个目录**（自动配层）、**zip/tgz 压缩包**，也可以是 ODB++ 的 step 目录。
+
+### DWG 导入
+
+DWG 是 Autodesk 的**闭源二进制格式**，标准库没有解码器，所以工具不会假装能读它。两条路：
+
+1. **推荐：在 CAD 里另存为 DXF**。AutoCAD / LibreCAD / KiCad / Altium / 立创 EDA 都支持
+   「另存为 → AutoCAD DXF（ASCII，R12 以上）」，生成 `.dxf` 后直接在文件浏览器里双击打开。
+2. **可选：装一个本机转换器，让 `.dwg` 也能直接双击打开**。服务端按以下顺序自动尝试，
+   都不存在时返回带操作指引的错误提示（界面会原样显示）：
+
+   | 优先级 | 转换器 | 启用方式 |
+   |---|---|---|
+   | 1 | LibreDWG `dwg2dxf` | 放进 `PATH`，或用环境变量 `PCB_CAM_DWG2DXF` 指向 exe 绝对路径 |
+   | 2 | ODA File Converter | 放进 `PATH`（`ODAFileConverter`），或用 `PCB_CAM_ODA` 指定 |
+   | 3 | `ezdxf` + ODA 插件 | 可选第三方，装上即可；不装不影响其它功能 |
+
+   转换结果落在系统临时目录，只用于当次解析；原始 `.dwg` 不会被改写。
+   转换后的文字 / 填充可能有损，界面「分析」面板会标出所用转换器。
+
+> DXF 是**通用 CAD 图纸**，不是 PCB 制造资料：工具不会按「必须有铜箔 / 钻孔」判定完整性，
+> 也不会拿它算最小线宽、环宽。板框、尺寸测量、图层开关、透明度、PNG / SVG 导出、测距都照常可用。
 
 ## 二、运行
 
@@ -75,10 +98,11 @@ python -m pcb_cam.preview 资料路径 -o out.png --comps --xy 坐标.csv --goto
 ```bat
 tests\run_tests.bat              :: 一条命令跑完全部（重建样例 -> 解析自测 -> 前端冒烟）
 
-python tests\make_samples.py     :: 重建演示资料（Gerber / zip / ODB++ 目录 / tgz / IPC-356）
-python tests\selftest.py         :: 装载 + 校验层数/孔数/板尺寸，并生成 tests\report-demo.md
+python tests\make_samples.py     :: 重建演示资料（Gerber / zip / ODB++ / tgz / IPC-356 / DXF）
+python tests\selftest.py         :: 装载 + 校验层数/孔数/板尺寸/DXF/层改写/元件长宽，并生成 tests\report-demo.md
 node tests\ui_smoke.js static\index.html        :: 前端无头冒烟（桩 DOM + 桩 Canvas 跑真实脚本）
 set PCB_SAMPLE=odb & node tests\ui_smoke.js static\index.html   :: 换 ODB++ 数据再跑一遍
+set PCB_SAMPLE=dxf & node tests\ui_smoke.js static\index.html   :: 换 DXF 图纸再跑一遍
 ```
 
 `ui_smoke.js` 不需要浏览器：它用桩 DOM/Canvas 执行 `index.html` 里的真实脚本，检查
@@ -92,6 +116,7 @@ set PCB_SAMPLE=odb & node tests\ui_smoke.js static\index.html   :: 换 ODB++ 数
 |---|---|
 | **浏览…** / `Ctrl+O` | 打开**本机文件浏览器**：左侧快速位置与盘符，中间逐级进入目录，顶部面包屑，可直接粘贴路径回车跳转 |
 | 左侧图层列表 | 勾选框开关图层；点**色点**只看该层；每层可单独调**透明度** |
+| **图层「类型 / 板面」下拉** | 每层第二行有「类型」「板面」两个下拉框 + 「自动」按钮。自动判别错了（尤其 DXF 的 CAD 图层名）可手动改成铜箔 / 阻焊 / 丝印 / 钢网 / 外形 / 铣槽 / 钻孔 / 文档 / 器件 / 其它，改完**立即重算配色、默认不透明度和整板分析**，层顺序不变；点「自动」按文件名复原 |
 | 拖拽 / 滚轮 | 平移 / 以光标为中心缩放 |
 | `F` / `+` / `-` | 全览 / 放大 / 缩小 |
 | `G` | 显示/隐藏网格 |
@@ -101,7 +126,8 @@ set PCB_SAMPLE=odb & node tests\ui_smoke.js static\index.html   :: 换 ODB++ 数
 | `Ctrl+O` | 打开文件浏览器 |
 | `Esc` | 关闭浏览框 / 取消测距 |
 | 定位区 | 填 X/Y 回车跳转；「取点」到图上取坐标；勾「视图跟随光标」随鼠标平移 |
-| 顶栏输入框 | 也可直接粘贴路径后回车；点「示例」在**公制板 → ODB++ → 英制板**之间循环 |
+| 顶栏输入框 | 也可直接粘贴路径后回车；点「示例」在**公制板 → ODB++ → 英制板 → DXF 图纸**之间循环 |
+| 文件浏览器里的 `.dwg` | 选中后底部会提示「DWG 需本机转换器，或另存为 ASCII DXF」；`.dxf` 标为 `CAD`，可直接双击 |
 | `U` | 切换尺寸单位（mm / mil / inch / mm+mil） |
 | 导出 | 导出当前视图 PNG、导出矢量 SVG（毫米 viewBox）、下载 Markdown 分析报告 |
 
@@ -110,7 +136,7 @@ set PCB_SAMPLE=odb & node tests\ui_smoke.js static\index.html   :: 换 ODB++ 数
 点 **浏览…**（或按 `Ctrl+O`）后：
 
 - 左边「快速位置」= 桌面 / 下载 / 文档 / 用户目录 / 工作目录 / **演示样例**；下面是本机盘符
-- 中间列表只列 **PCB 相关资料**（Gerber、钻孔、网表、压缩包），避免一堆无关文件
+- 中间列表只列 **PCB / CAD 相关资料**（Gerber、钻孔、网表、压缩包、DXF、DWG），避免一堆无关文件
 - 每个文件夹带**内容提示**：`ODB++`、`9 个资料`、`压缩包` —— 直接告诉你哪一层能开
 - **双击文件夹**进入，**双击文件**直接加载；也可点选后按 `Enter` / 「打开选中」
 - 打开一个**文件夹** = 自动配层（顶层/底层/阻焊/丝印/钻孔…）；打开一个**文件** = 只看单层
@@ -187,13 +213,32 @@ mm 再进内存，所以英制资料与公制资料可以混在一起看；「�
 
 面板「导出 CSV」：**板上器件**（来自 ODB++ `components`）或**导入的 XY 元件**都能导。
 
-导出的列：
+导出的列（含**元件长 / 宽 / 类型**）：
 
 默认公制：
 
 ```
-RefDes, Side, X(mm), Y(mm), Rotation, Package, Value, Status, Dev(mm), Source
+RefDes, Side, X(mm), Y(mm), Rotation, Package, Value,
+Length(mm), Width(mm), Mount, SizeSrc, Status, Dev(mm), Source
 ```
+
+| 列 | 含义 |
+|---|---|
+| `Length(mm)` / `Width(mm)` | 元件外形长 / 宽（长=较长边），**固定 mm**，不随坐标单位切换 |
+| `Mount` | `SMD`（表贴）/ `TH`（插件）/ 空（资料里判不出来） |
+| `SizeSrc` | 数据来源，见下表，用来判断可信度 |
+
+| `SizeSrc` | 来源 | 说明 |
+|---|---|---|
+| `manual` | 界面手工填 | 优先级最高，推断不会覆盖 |
+| `attr` | ODB++ `PRP Length/Width/Mount`、XY 文件的 `Length/Width/Size/Mount` 列 | 最准，直接来自上游 CAD |
+| `geometry` | 板上铜箔焊盘外接框 + 钻孔位置 | 有焊盘就能估；**是焊盘外接框，通常略大于塑封体**；焊盘范围内有钻孔判 `TH`，否则 `SMD` |
+| `package` | 常见封装代号查表（0603 / 0805 / SOIC-8 / DIP / SOT-23 …） | 经验值，供缺资料时兜底 |
+| `unknown` | 无线索 | 留空，不瞎填 |
+
+几何推断出的 `Length / Width` 是**估算值**，下厂前请以封装规格书或贴片厂 BOM 为准。
+界面元件列表每行会显示 `SMD 1.60×0.80mm` 之类的徽标，图上按长宽画**元件本体虚线框**；
+`POST /api/component/attr` 可以按位号手工改写长 / 宽 / 类型（改后标为 `manual`）。
 
 把顶栏单位换成 `mil` / `inch`，表头随之变成 `X(mil)` / `X(in)`；换成 `mm / mil` 则并列输出
 `X(mm), X(mil), Y(mm), Y(mil), ..., Dev(mm), Dev(mil)`。带上 `Status` 与 `Dev`，
@@ -224,6 +269,8 @@ pcb-cam/
 │  ├─ excellon.py   Excellon 钻孔与槽解析器（零点约定自适应）
 │  ├─ odbpp.py      ODB++ 解析器（目录 / tgz / zip 虚拟文件系统）
 │  ├─ ipc356.py     IPC-D-356 网表解析与比对
+│  ├─ dxf.py        ASCII DXF 解析 + DWG 转换器桥接（单位换算 / 块展开 / bulge 弧）
+│  ├─ components.py 元件长宽与 SMD/TH 推断（属性 / 焊盘几何 / 封装代号三级兜底）
 │  ├─ xy.py         XY/贴片坐标解析、单位与 Y 镜像自动对齐、焊盘校验、CSV 导出
 │  ├─ units.py      mm / mil / inch 换算与格式化（双单位显示、CSV 表头）
 │  ├─ project.py    工程装载、图层分类配色、分析与汇总
@@ -233,8 +280,8 @@ pcb-cam/
 │  └─ server.py     本地 HTTP 服务（REST + 静态页）
 ├─ static/index.html  单文件前端（Canvas 渲染 + 交互）
 ├─ tests/            样例生成器、解析自测、前端冒烟、演示资料
-│  ├─ make_samples.py  生成演示板（公制 Gerber / ODB++ / IPC-356 + 英制 inch 板，含宏光圈、区域、负极性、圆弧）
-│  ├─ selftest.py     装载与数值校验
+│  ├─ make_samples.py  生成演示资料（公制 Gerber / ODB++ / IPC-356 / 英制 inch 板 / DXF 图纸）
+│  ├─ selftest.py     装载与数值校验（含 DXF、层类型改写、元件长宽/类型）
 │  ├─ ui_smoke.js     前端无头冒烟（桩 DOM + 桩 Canvas）
 │  ├─ demo-xy.csv     贴片坐标样例（覆盖 正常/偏差/面别/无焊盘 四种状态）
 │  └─ run_tests.bat   一键跑全部测试
@@ -250,12 +297,17 @@ pcb-cam/
 | GET | `/api/layer?i=N` | 第 N 层图元（毫米坐标） |
 | GET | `/api/report?units=both\|mm\|mil\|inch` | Markdown 报告，默认双单位；加 `&download=1` 以附件下载 |
 | GET | `/api/sample?name=gerber` | 载入内置演示资料 |
-| POST | `/api/load` | `{"path": "D:\\proj\\gerber"}`，相对路径按项目根解析 |
-| GET | `/api/export/components?source=board\|xy&units=mm\|mil\|inch\|both` | 元件 / XY 坐标 CSV，`both` 时 mm 与 mil 并列成列 |
+| POST | `/api/load` | `{"path": "D:\\proj\\gerber"}`，相对路径按项目根解析；`.dxf` / `.dwg` 同样走这里 |
+| POST | `/api/layer/kind` | `{"i": 3, "kind": "outline", "side": "both"}`，手动指定层类型 / 板面；`kind:"auto"` 按文件名复原。返回新摘要 |
+| POST | `/api/component/attr` | `{"ref": "R1", "length": 1.6, "width": 0.8, "mount": "SMD"}`，手工改元件长宽 / 类型 |
+| GET | `/api/export/components?source=board\|xy&units=mm\|mil\|inch\|both` | 元件 / XY 坐标 CSV（含 `Length(mm) / Width(mm) / Mount / SizeSrc`），`both` 时 mm 与 mil 并列成列 |
 
 ## 八、已知边界
 
 - 只做**读取与分析**，不做编辑/拼版/光绘输出
+- **DWG 二进制**需本机转换器（LibreDWG / ODA / ezdxf-odafc）或先在 CAD 里另存为 ASCII DXF；转换器输出有损
+- DXF 的 `SPLINE` 用 Catmull-Rom 折线逼近、`HATCH` 只画边界不还原填充图案、`DIMENSION` 依赖其匿名块；`PNG`（命令行预览）不渲染 DXF 文字，Web 界面与 SVG 导出可以
+- 元件 `Length/Width` 由焊盘外接框推断时是估算值，`SMD/TH` 依赖钻孔资料是否齐全；判不出来留空而不是猜
 - **浏览框列的是「运行服务那台机器」的磁盘**。本机使用即本机文件夹；若从别的电脑访问该端口，看到的是服务端的盘符
 - 资料路径始终在服务端解析，所以不需要往浏览器上传文件——几 GB 的 ODB++ 目录也能秒开
 - 光圈宏里的**曝光关（负曝光）只在该宏内部镂空**，不会清除其下已绘图形——这是 Gerber X2 澄清后的规范语义（业界多数现代读图器一致）。个别老资料依赖旧行为，可能出现"焊盘看起来没挖开"的情况，属正常

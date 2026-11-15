@@ -1,4 +1,4 @@
-"""生成演示 / 自测用的 PCB 资料（Gerber 套件、Excellon、IPC-D-356、ODB++）。
+"""生成演示 / 自测用的 PCB 资料（Gerber 套件、Excellon、IPC-D-356、ODB++、DXF）。
 
 用法：
     python tests/make_samples.py            # 生成到 tests/samples/
@@ -453,6 +453,11 @@ def odb_components():
     for i, (cx, cy) in enumerate(RES):
         L.append("CMP %d %.3f %.3f 0.0 N R%d 0603 ;;ID=%d" % (i, cx, cy, i + 1, 10 + i))
         L.append("PRP Description 'RES 10K 1%%'")
+        # 首颗带上显式长/宽/贴装属性，覆盖「attr」来源分支
+        if i == 0:
+            L.append("PRP Length '1.60'")
+            L.append("PRP Width '0.80'")
+            L.append("PRP Mount 'SMD'")
     L.append("CMP 9 %.3f %.3f 0.0 N U1 SOIC-8 ;;ID=99" % (SOIC_X1 + 3.0, SOIC_Y))
     L.append("PRP Description 'OPAMP'")
     return "\n".join(L) + "\n"
@@ -551,6 +556,98 @@ def inch_drill():
     )
 
 
+def dxf_file():
+    """一张含 5 个 CAD 图层的 ASCII DXF（R2000，mm），覆盖主要实体类型。
+
+    板框固定 60 x 40 mm，其余实体全部落在框内，便于自测校验包围盒。
+    """
+    P = []
+
+    def a(code, value):
+        P.append((code, value))
+
+    def ent(kind, layer, fields):
+        a(0, kind)
+        a(8, layer)
+        for code, value in fields:
+            a(code, value)
+
+    # ---- HEADER：单位 mm ----
+    a(0, "SECTION"); a(2, "HEADER")
+    a(9, "$ACADVER"); a(1, "AC1015")
+    a(9, "$INSUNITS"); a(70, 4)
+    a(9, "$MEASUREMENT"); a(70, 1)
+    a(0, "ENDSEC")
+
+    # ---- TABLES：图层表 ----
+    a(0, "SECTION"); a(2, "TABLES")
+    a(0, "TABLE"); a(2, "LAYER"); a(70, 5)
+    for name, color in (("OUTLINE", 2), ("COPPER_TOP", 1), ("SILK_TOP", 3),
+                        ("DRILL", 4), ("DOC_NOTES", 8)):
+        a(0, "LAYER"); a(2, name); a(70, 0); a(62, color); a(6, "CONTINUOUS")
+    a(0, "ENDTAB"); a(0, "ENDSEC")
+
+    # ---- BLOCKS：可 INSERT 展开的焊盘块 ----
+    a(0, "SECTION"); a(2, "BLOCKS")
+    a(0, "BLOCK"); a(8, "0"); a(2, "PAD60"); a(70, 0)
+    a(10, 0.0); a(20, 0.0); a(30, 0.0); a(3, "PAD60"); a(1, "")
+    ent("CIRCLE", "0", [(10, 0.0), (20, 0.0), (30, 0.0), (40, 0.6)])
+    a(0, "ENDBLK"); a(8, "0")
+    a(0, "ENDSEC")
+
+    # ---- ENTITIES ----
+    a(0, "SECTION"); a(2, "ENTITIES")
+
+    # 板框：闭合 LWPOLYLINE，60 x 40
+    a(0, "LWPOLYLINE"); a(8, "OUTLINE"); a(90, 4); a(70, 1)
+    for x, y in ((0.0, 0.0), (60.0, 0.0), (60.0, 40.0), (0.0, 40.0)):
+        a(10, x); a(20, y)
+
+    # 走线 / 圆弧 / 椭圆 / 凸度弧 / 老式 POLYLINE / SPLINE / SOLID / POINT
+    ent("LINE", "COPPER_TOP", [(10, 2.0), (20, 2.0), (30, 0.0),
+                               (11, 58.0), (21, 2.0), (31, 0.0)])
+    ent("CIRCLE", "COPPER_TOP", [(10, 8.0), (20, 30.0), (30, 0.0), (40, 1.2)])
+    ent("ARC", "COPPER_TOP", [(10, 30.0), (20, 20.0), (30, 0.0),
+                              (40, 5.0), (50, 30.0), (51, 150.0)])
+    ent("ELLIPSE", "COPPER_TOP", [(10, 45.0), (20, 20.0), (30, 0.0),
+                                  (11, 3.0), (21, 0.0), (31, 0.0),
+                                  (40, 0.5), (41, 0.0), (42, 6.283185307179586)])
+    a(0, "LWPOLYLINE"); a(8, "COPPER_TOP"); a(90, 2); a(70, 0)
+    a(10, 20.0); a(20, 15.0); a(42, 0.5)
+    a(10, 24.0); a(20, 15.0); a(42, 0.0)
+    a(0, "POLYLINE"); a(8, "COPPER_TOP"); a(66, 1); a(70, 0)
+    for x, y in ((35.0, 30.0), (40.0, 32.0), (45.0, 30.0)):
+        a(0, "VERTEX"); a(8, "COPPER_TOP"); a(10, x); a(20, y); a(30, 0.0)
+    a(0, "SEQEND"); a(8, "COPPER_TOP")
+    a(0, "SPLINE"); a(8, "COPPER_TOP"); a(70, 0); a(71, 3)
+    for x, y in ((35.0, 5.0), (38.0, 8.0), (41.0, 5.0), (44.0, 8.0)):
+        a(11, x); a(21, y); a(31, 0.0)
+    ent("SOLID", "COPPER_TOP", [(10, 30.0), (20, 30.0), (30, 0.0),
+                                (11, 33.0), (21, 30.0), (31, 0.0),
+                                (12, 30.0), (22, 33.0), (32, 0.0),
+                                (13, 33.0), (23, 33.0), (33, 0.0)])
+    ent("POINT", "DRILL", [(10, 55.0), (20, 5.0), (30, 0.0)])
+    ent("CIRCLE", "DRILL", [(10, 8.0), (20, 8.0), (30, 0.0), (40, 0.8)])
+
+    # 块插入 + 矩形阵列（2 x 2）
+    a(0, "INSERT"); a(8, "COPPER_TOP"); a(2, "PAD60")
+    a(10, 15.0); a(20, 10.0); a(30, 0.0)
+    a(41, 1.0); a(42, 1.0); a(50, 0.0)
+    a(70, 2); a(71, 2); a(44, 2.0); a(45, 2.0)
+
+    # 文字 / 多行文字 / 填充边界
+    ent("TEXT", "SILK_TOP", [(10, 2.0), (20, 38.0), (30, 0.0),
+                             (40, 1.2), (1, "PCB-CAM DXF DEMO"), (50, 0.0)])
+    ent("MTEXT", "SILK_TOP", [(10, 2.0), (20, 35.0), (30, 0.0),
+                              (40, 1.0), (1, "TOP SILK\\PUNITS=MM"), (50, 0.0)])
+    a(0, "HATCH"); a(8, "DOC_NOTES"); a(70, 0); a(91, 4)
+    for x, y in ((48.0, 32.0), (56.0, 32.0), (56.0, 37.0), (48.0, 37.0)):
+        a(10, x); a(20, y)
+
+    a(0, "ENDSEC"); a(0, "EOF")
+    return "\n".join("%s\n%s" % (c, v) for c, v in P) + "\n"
+
+
 def main():
     if os.path.isdir(OUT):
         shutil.rmtree(OUT)
@@ -597,17 +694,22 @@ def main():
     with tarfile.open(tgz, "w:gz") as tf:
         tf.add(odb_dir, arcname="demo-odb")
 
+    # DXF / DWG 演示图纸（DWG 为二进制，这里提供 DXF 供直接打开）
+    with open(os.path.join(OUT, "demo.dxf"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(dxf_file())
+
     # XY / 贴片坐标数据（刻意留了几处问题：坐标偏差、面别错、板上没焊盘、板上独有）
+    # 同时带上 Length / Width / Mount 列，验证坐标 CSV 的器件尺寸导出
     xy_csv = os.path.join(OUT, "demo-xy.csv")
     with open(xy_csv, "w", encoding="utf-8", newline="\n") as f:
         f.write(
-            "Designator,Comment,Layer,Footprint,Mid X,Mid Y,Rotation\n"
-            "R1,10K,TopLayer,0603,10.000,30.000,0\n"
-            "R2,10K,TopLayer,0603,10.000,22.500,180\n"       # 与板上相差 0.5mm
-            "R4,10K,BottomLayer,0603,10.000,6.000,90\n"      # 面别与板上不符
-            "U1,OPAMP,TopLayer,SOIC-8,20.000,10.000,270\n"
-            "X9,NC,TopLayer,0402,40.000,32.000,0\n"          # 板上没有这颗、也没有焊盘
-        )                                                    # R3 故意缺失 -> 板上有、XY 没有
+            "Designator,Comment,Layer,Footprint,Mid X,Mid Y,Rotation,Length,Width,Mount\n"
+            "R1,10K,TopLayer,0603,10.000,30.000,0,1.60,0.80,SMD\n"
+            "R2,10K,TopLayer,0603,10.000,22.500,180,1.60,0.80,SMD\n"   # 与板上相差 0.5mm
+            "R4,10K,BottomLayer,0603,10.000,6.000,90,1.60,0.80,SMD\n" # 面别与板上不符
+            "U1,OPAMP,TopLayer,SOIC-8,20.000,10.000,270,4.90,3.90,SMD\n"
+            "X9,NC,TopLayer,0402,40.000,32.000,0,1.00,0.50,SMD\n"     # 板上没有这颗、也没有焊盘
+        )                                                              # R3 故意缺失 -> 板上有、XY 没有
 
     print("样例已生成：")
     for root, _dirs, names in os.walk(OUT):

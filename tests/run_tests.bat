@@ -14,10 +14,10 @@ for %%P in (
   "C:\Python312\python.exe"
 ) do if not defined PY if exist %%P set "PY=%%~P"
 if not defined PY (
-  where py >nul 2>nul && set "PY=py -3"
+  where python >nul 2>nul && set "PY=python"
 )
 if not defined PY (
-  where python >nul 2>nul && set "PY=python"
+  where py >nul 2>nul && set "PY=py"
 )
 if not defined PY (
   echo [ERROR] Python 3 not found.
@@ -63,6 +63,13 @@ set "PCB_SAMPLE=odb"
 "%NODE%" tests\ui_smoke.js static\index.html http://127.0.0.1:%PORT% > "%TEMP%\pcbcam-ui2.json"
 if errorlevel 1 ( type "%TEMP%\pcbcam-ui2.json" & goto :fail )
 "%PY%" tests\ui_report.py "%TEMP%\pcbcam-ui2.json"
+if errorlevel 1 goto :fail
+set "PCB_SAMPLE="
+
+set "PCB_SAMPLE=dxf"
+"%NODE%" tests\ui_smoke.js static\index.html http://127.0.0.1:%PORT% > "%TEMP%\pcbcam-ui3.json"
+if errorlevel 1 ( type "%TEMP%\pcbcam-ui3.json" & goto :fail )
+"%PY%" tests\ui_report.py "%TEMP%\pcbcam-ui3.json"
 if errorlevel 1 goto :fail
 set "PCB_SAMPLE="
 

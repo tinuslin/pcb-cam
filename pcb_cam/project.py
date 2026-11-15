@@ -1,4 +1,4 @@
-"""工程装载与分析：识别 Gerber / Excellon / ODB++ / IPC-D-356，汇总成一块板。
+"""工程装载与分析：识别 Gerber / Excellon / ODB++ / IPC-D-356 / DXF，汇总成一块板。
 
 对外主要接口：
     board = load_board(path)          # 目录 / 压缩包 / 单文件
@@ -14,6 +14,8 @@ import re
 import tempfile
 import zipfile
 
+from . import components as compmod
+from . import dxf as dxfm
 from . import excellon as ex
 from . import geom
 from . import gerber as gb
@@ -133,6 +135,7 @@ class Board:
         self.bbox = None
         self.analysis = {}
         self.tmpdir = None
+        self.dxf = None           # DXF 图纸元信息（单位 / 块数 / 转换器），非 DXF 为 None
 
 
 def _new_layer(name, path, kind, side, objects, bbox, stats, warnings, attrs=None):
@@ -152,12 +155,65 @@ def _new_layer(name, path, kind, side, objects, bbox, stats, warnings, attrs=Non
     }
 
 
+# 手动改层类型时允许的值（前端下拉与后端校验共用）
+LAYER_KINDS = ("copper", "mask", "silk", "paste", "outline", "rout",
+               "drill", "doc", "component", "other")
+LAYER_SIDES = ("top", "bottom", "inner", "both", "none")
+
+
+def _auto_kind(layer):
+    """「自动」按钮：按文件名 / CAD 图层名重新判别。"""
+    name = layer.get("name") or ""
+    if (layer.get("attrs") or {}).get("dxf"):
+        return _dxf_layer_kind(name.split(":", 1)[-1])
+    return classify_name(layer.get("file") or name)
+
+
+def reclassify_layer(board, index, kind=None, side=None):
+    """手动指定某一层的类型 / 板面。
+
+    改完立即重算配色、默认不透明度与整板分析结论，**不改变层的顺序**
+    （顺序一变，前端已缓存的图元数组就会错位）。
+    ``kind="auto"`` 表示按文件名重新自动判别。
+    """
+    if index < 0 or index >= len(board.layers):
+        raise IndexError("层序号越界：%s" % index)
+    layer = board.layers[index]
+    auto = False
+    if kind is not None:
+        k = str(kind).strip().lower()
+        if k == "auto":
+            auto = True
+            k, auto_side = _auto_kind(layer)
+            if side is None:
+                side = auto_side
+        if k not in LAYER_KINDS:
+            raise ValueError("不支持的层类型：%s（可用 %s）" % (k, "/".join(LAYER_KINDS)))
+        layer["kind"] = k
+    if side is not None:
+        s = str(side).strip().lower()
+        if s not in LAYER_SIDES:
+            raise ValueError("不支持的板面：%s（可用 %s）" % (s, "/".join(LAYER_SIDES)))
+        layer["side"] = s
+    layer["color"] = layer_color(layer["kind"], layer["side"], index)
+    layer["opacity"] = _KIND_OPACITY.get(layer["kind"], 1.0)
+    layer.setdefault("attrs", {})["kind_source"] = "auto" if auto else "manual"
+    # 内层铜箔重新依次配色（不重排层）
+    inner = [x for x in board.layers if x["kind"] == "copper" and x["side"] == "inner"]
+    for i, x in enumerate(inner):
+        x["color"] = _INNER_COLORS[i % len(_INNER_COLORS)]
+    board.analysis = _analyze(board)
+    return layer
+
+
 # --------------------------------------------------------------------------- #
 # 单文件 / 目录 / 压缩包
 # --------------------------------------------------------------------------- #
 def sniff_text(text: str) -> str:
     head = text[:4000]
     stripped = head.lstrip()
+    if dxfm.is_dxf(text):
+        return "dxf"
     if "%FS" in head or stripped.startswith("%") or (
             stripped.startswith("G04") and "%" in head):
         return "gerber"
@@ -195,6 +251,10 @@ def load_board(path, step=None):
             return _board_from_odb(path, step)
         return _scan_dir(path)
     low = path.lower()
+    if low.endswith(".dwg"):
+        return _board_from_dwg(path)
+    if low.endswith(".dxf"):
+        return _board_from_dxf(path)
     if low.endswith(".zip"):
         return _from_zip(path, step)
     if low.endswith((".tgz", ".tar.gz", ".tar")):
@@ -251,6 +311,72 @@ def _find_odb_root(root):
         if os.path.isdir(cand) and _is_odb_dir(cand):
             return cand
     return None
+
+
+# --------------------------------------------------------------------------- #
+# DXF / DWG（CAD 图纸）
+# --------------------------------------------------------------------------- #
+def _dxf_layer_kind(name):
+    """CAD 图层名 -> PCB 层类别。识别不出来的统一归到「文档」，用户可在界面手动改。"""
+    kind, side = classify_name(name)
+    if kind == "other":
+        return "doc", "none"
+    return kind, side
+
+
+def _append_dxf_layers(b, doc, path, display=None, prefix="", used=None):
+    """把 parse_dxf 的按层结果并入 Board。多 DXF 同目录时给层名加文件名前缀防重名。"""
+    display = display or os.path.basename(path)
+    for lay in doc["layers"]:
+        kind, side = _dxf_layer_kind(lay["name"])
+        nm = "%s:%s" % (prefix, lay["name"]) if prefix else lay["name"]
+        if used is not None:
+            nm = _uniq(nm, used)
+        b.layers.append(_new_layer(
+            name=nm, path=display, kind=kind, side=side,
+            objects=lay["objects"], bbox=lay["bbox"],
+            stats={"objects": len(lay["objects"]), "min_width": None,
+                   "area": 0.0, "source_unit": doc["units"]},
+            warnings=[],
+            attrs={"dxf": True, "cad_color_index": lay.get("color_index", 7),
+                   "kind_source": "auto"},
+        ))
+    b.warnings.extend(doc["warnings"])
+    return len(doc["layers"])
+
+
+def _board_from_dxf(path, display=None, source=None, converter=None):
+    """解析单个 ASCII DXF；source 为 DWG 转换前的原始路径。"""
+    text = _read_text(path)
+    doc = dxfm.parse_dxf(text, os.path.basename(path))
+    b = Board()
+    b.path = source or path
+    b.name = os.path.splitext(os.path.basename(b.path))[0]
+    b.format = "dxf"
+    b.dxf = {
+        "units": doc["units"],
+        "unit_scale": doc["unit_scale"],
+        "blocks": doc["blocks"],
+        "stats": doc["stats"],
+        "source": os.path.basename(source or path),
+        "converter": converter or "",
+        "hint": "" if not source else dxfm.DWG_HINT,
+    }
+    _append_dxf_layers(b, doc, path, display=display)
+    _finalize(b)
+    return b
+
+
+def _board_from_dwg(path):
+    """DWG 是闭源二进制格式：交给本机已安装的转换器转成 DXF 再走同一条渲染链路。
+
+    未安装转换器时抛出带导出指引的 ValueError，不假装能读二进制。
+    """
+    converted, converter = dxfm.convert_dwg(path)
+    disp = os.path.basename(path)
+    b = _board_from_dxf(converted, display=disp, source=path, converter=converter)
+    b.warnings.insert(0, "DWG 已由 %s 转成 DXF 后解析（文字与填充可能有损）" % converter)
+    return b
 
 
 def _board_from_odb(path, step=None):
@@ -335,13 +461,43 @@ def _scan_dir(root, source=None):
     return b
 
 
+def _append_cad(b, text, path, display, used, prefix="", converter=""):
+    """目录扫描时把一个 DXF/DWG 转成图层并入 Board，返回解析出的图层数。"""
+    doc = dxfm.parse_dxf(text, os.path.basename(path))
+    if b.dxf is None:
+        b.dxf = {"units": doc["units"], "unit_scale": doc["unit_scale"],
+                 "blocks": doc["blocks"], "stats": doc["stats"],
+                 "source": display, "converter": converter, "hint": ""}
+    else:
+        b.dxf["blocks"] += doc["blocks"]
+        b.dxf["stats"]["objects"] += doc["stats"]["objects"]
+        b.dxf["stats"]["entities"] += doc["stats"]["entities"]
+        b.dxf["source"] += " / " + display
+    return _append_dxf_layers(b, doc, path, display=display,
+                              prefix=prefix, used=used)
+
+
 def _load_files(b, files):
     used = set()
     drill_progs = []
+    gerber_files = 0
+    cad_files = 0
     for f in files:
         low = f.lower()
         if low.endswith((".md", ".pdf", ".jpg", ".png", ".xls", ".xlsx", ".doc", ".docx",
                          ".zip", ".tgz", ".tar", ".gz", ".rar", ".7z", ".csv", ".json")):
+            continue
+        base = os.path.basename(f)
+        if low.endswith(".dwg"):
+            try:
+                converted, conv = dxfm.convert_dwg(f)
+                text = _read_text(converted)
+                _append_cad(b, text, converted, base, used,
+                            prefix=os.path.splitext(base)[0], converter=conv)
+                cad_files += 1
+                b.warnings.append("%s 已由 %s 转成 DXF 后解析" % (base, conv))
+            except Exception as exc:
+                b.warnings.append("%s 无法直接读取：%s" % (base, exc))
             continue
         try:
             text = _read_text(f)
@@ -349,8 +505,17 @@ def _load_files(b, files):
             b.warnings.append("读取失败 %s：%s" % (os.path.basename(f), exc))
             continue
         kind = sniff_text(text)
-        base = os.path.basename(f)
+        if kind == "dxf":
+            try:
+                prefix = os.path.splitext(base)[0] if sum(
+                    1 for x in files if x.lower().endswith((".dxf", ".dwg"))) > 1 else ""
+                _append_cad(b, text, f, base, used, prefix=prefix)
+                cad_files += 1
+            except Exception as exc:
+                b.warnings.append("DXF 解析失败 %s：%s" % (base, exc))
+            continue
         if kind == "gerber":
+            gerber_files += 1
             img = gb.parse_gerber(text, base)
             lk, side = classify_name(base)
             if img.stats.get("min_width") is None and not img.objects:
@@ -393,6 +558,10 @@ def _load_files(b, files):
         drill.units = drill_progs[0].units
         b.drills = drill
 
+    # 目录里只有 CAD 图纸（可附带钻孔文件）时按图纸口径出分析，不报「缺铜箔/缺钻孔」
+    if cad_files and not gerber_files:
+        b.format = "dxf"
+
 
 def _uniq(name, used):
     base = name or "layer"
@@ -425,6 +594,13 @@ def _from_single(path):
         b.netlists.append(ipc.parse_ipc356(text, base, source=path))
         b.format = "netlist"
         b.warnings.append("仅加载了网表文件，没有图形层")
+    elif kind == "dxf":
+        doc = dxfm.parse_dxf(text, base)
+        b.format = "dxf"
+        b.dxf = {"units": doc["units"], "unit_scale": doc["unit_scale"],
+                 "blocks": doc["blocks"], "stats": doc["stats"],
+                 "source": base, "converter": "", "hint": ""}
+        _append_dxf_layers(b, doc, path)
     else:
         raise ValueError("无法识别的文件类型：%s" % base)
     _finalize(b)
@@ -459,6 +635,10 @@ def _finalize(b):
             xy.infer_sides(b.components, b, tol=1.5)
         except Exception:
             pass
+        try:
+            compmod.enrich_components(b)
+        except Exception as exc:
+            b.warnings.append("元件长宽/贴装类型推断失败：%s" % exc)
     b.analysis = _analyze(b)
 
 
@@ -471,16 +651,18 @@ def _analyze(b):
     slots = (b.drills.slots if b.drills else [])
 
     warns = list(b.warnings)
-    if not copper:
-        warns.append("未找到铜箔层")
-    else:
-        sides = {l["side"] for l in copper}
-        if "top" in sides and "bottom" not in sides and len(copper) == 1:
-            pass
-        elif "top" in sides and "bottom" not in sides:
-            warns.append("有顶层铜箔但缺少底层铜箔，请确认资料完整性")
-    if not b.drills:
-        warns.append("未找到钻孔文件（.drl / Excellon）")
+    # DXF 是通用 CAD 图纸，不按 PCB 制造资料的「必须有铜箔/钻孔」来判完整性
+    if b.format != "dxf":
+        if not copper:
+            warns.append("未找到铜箔层")
+        else:
+            sides = {l["side"] for l in copper}
+            if "top" in sides and "bottom" not in sides and len(copper) == 1:
+                pass
+            elif "top" in sides and "bottom" not in sides:
+                warns.append("有顶层铜箔但缺少底层铜箔，请确认资料完整性")
+        if not b.drills:
+            warns.append("未找到钻孔文件（.drl / Excellon）")
 
     min_widths = []
     for l in copper:
@@ -670,6 +852,7 @@ def board_summary(b: Board):
             "file": os.path.basename(l.get("file") or ""),
             "kind": l["kind"],
             "side": l["side"],
+            "kind_source": (l.get("attrs") or {}).get("kind_source", "auto"),
             "color": l["color"],
             "count": len(l["objects"]),
             "bbox": [round(v, 3) for v in l["bbox"]] if l.get("bbox") else None,
@@ -711,6 +894,7 @@ def board_summary(b: Board):
         "netlists": nets,
         "components": b.components[:5000],
         "analysis": b.analysis,
+        "dxf": b.dxf,
         "warnings": b.analysis.get("warnings", []) if b.analysis else b.warnings,
     }
 

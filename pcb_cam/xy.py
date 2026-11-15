@@ -3,7 +3,8 @@
 支持的常见导出格式：
   - Altium / Protel      ``Designator,Comment,Layer,Footprint,Mid X,Mid Y,Rotation``
   - KiCad .pos           ``### Module positions`` / ``## Unit = mm`` / ``Ref Val Package PosX PosY Rot Side``
-  - PADS / Allegro / CAM350 / 各家 txt、csv、tsv：列名可以是 Ref/RefDes/位号、X/MidX/PosX、Y、Rot/Angle
+  - PADS / Allegro / 各家 txt、csv、tsv：列名可以是 Ref/RefDes/位号、X/MidX/PosX、Y、Rot/Angle
+  - 尺寸 / 类型列        ``Length / Width / Size / Mount``（SMD、TH），进 CSV 一并导出
   - 无表头               ``R1 10.5 20.5 90 top``（位号 + 两个数 + 可选角度/面）
 
 对外单位统一为 **mm**，坐标系与 Gerber 一致（Y 向上）。
@@ -13,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 
+from . import components as compmod
 from . import geom, units
 
 # --------------------------------------------------------------------------- #
@@ -36,8 +38,21 @@ _KEYS = {
                 ("package", "footprint", "pattern", "封装")),
     "value": ({"value", "comment", "val", "comment1", "值", "参数", "标称", "标称值", "型号"},
               ("value", "comment", "标称")),
+    "length": ({"length", "bodylength", "bodyl", "sizex", "dimx", "componentlength",
+                "长", "长度", "本体长", "元件长"},
+               ("length", "bodylength", "sizex", "componentlength", "长度")),
+    "width": ({"width", "bodywidth", "bodyw", "sizey", "dimy", "componentwidth",
+               "宽", "宽度", "本体宽", "元件宽"},
+              ("width", "bodywidth", "sizey", "componentwidth", "宽度")),
+    "size": ({"size", "bodysize", "body_size", "dimensions", "packagesize",
+              "尺寸", "外形尺寸", "封装尺寸", "长宽"},
+             ("bodysize", "dimensions", "packagesize", "尺寸")),
+    "mount": ({"mount", "mounttype", "mount_type", "mounting", "technology",
+               "componenttype", "packagetype", "smt", "smd", "装配类型", "贴装类型", "贴装"},
+              ("mounttype", "mounting", "componenttype", "packagetype", "贴装")),
 }
-_KEY_ORDER = ("ref", "x", "y", "rot", "side", "package", "value")
+_KEY_ORDER = ("ref", "x", "y", "rot", "side", "package", "value",
+              "length", "width", "size", "mount")
 
 _UNIT_FACTORS = {
     "mm": 1.0, "millimeter": 1.0, "millimetre": 1.0, "millimeters": 1.0, "毫米": 1.0,
@@ -203,7 +218,7 @@ def parse_xy(text, name="", path=""):
 
     lines = [ln.rstrip("\r\n") for ln in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
 
-    # 注释里带的单位信息（KiCad / CAM350 常见）
+    # 注释里带的单位信息（KiCad / 各家 CAD 常见）
     for ln in lines[:40]:
         if ln.lstrip().startswith(("#", "//", ";")):
             m = re.search(r"unit[s]?\s*[=:]\s*([A-Za-z\u4e00-\u9fff]+)", ln, re.I)
@@ -253,6 +268,7 @@ def parse_xy(text, name="", path=""):
                 "x": nums[0], "y": nums[1],
                 "rot": nums[2] if len(nums) > 2 else None,
                 "side": side, "package": "", "value": "",
+                "length": None, "width": None, "mount": "", "size_source": "",
             })
         if data.base:
             data.header = ["Ref", "X", "Y"]
@@ -284,6 +300,9 @@ def parse_xy(text, name="", path=""):
             x, y = _num(cell("x")), _num(cell("y"))
             if x is None or y is None:
                 continue
+            length, width = compmod.parse_size(cell("size"))
+            length = _size_num(cell("length")) if cell("length") else length
+            width = _size_num(cell("width")) if cell("width") else width
             data.base.append({
                 "ref": cell("ref") or ("#%d" % len(data.base)),
                 "x": x, "y": y,
@@ -291,6 +310,10 @@ def parse_xy(text, name="", path=""):
                 "side": _side_of(cell("side")),
                 "package": cell("package"),
                 "value": cell("value"),
+                "length": length, "width": width,
+                "mount": compmod.normalize_mount(cell("mount")),
+                "size_source": "attr" if (length is not None or width is not None
+                                          or cell("mount")) else "",
             })
     data.raw_rows = max(data.raw_rows, len(data.base))
 
@@ -298,11 +321,24 @@ def parse_xy(text, name="", path=""):
     if not data.base:
         data.warnings.append("没有识别出任何坐标行（检查表头列名或分隔符）")
     data.unit_factor = _UNIT_FACTORS.get(data.units, 1.0)
-    for e in data.entries:
-        e["x"] *= data.unit_factor
-        e["y"] *= data.unit_factor
+    _scale_entries(data.entries, data.unit_factor)
     _recalc_bbox(data)
     return data
+
+
+def _size_num(s):
+    """尺寸列取第一个数值（可能是 "1.6 mm"，也可能是封装代号 0603）。"""
+    return compmod.parse_size(s)[0]
+
+
+def _scale_entries(entries, factor):
+    """坐标与长宽一起按文件单位折算成 mm（长宽列与坐标列同单位）。"""
+    for e in entries:
+        e["x"] *= factor
+        e["y"] *= factor
+        for k in ("length", "width"):
+            if e.get(k) is not None:
+                e[k] = round(e[k] * factor, 4)
 
 
 def _recalc_bbox(data):
@@ -401,6 +437,9 @@ def align(data, board_bbox=None, units="auto", yflip="auto", board=None):
             y = 2 * cy - y
         d = dict(e)
         d["x"], d["y"] = x, y
+        for k in ("length", "width"):
+            if d.get(k) is not None:
+                d[k] = round(d[k] * factor, 4)
         out.append(d)
     data.entries = out
     data.unit_factor = factor
@@ -607,14 +646,19 @@ _UNIT_HEAD = {"mm": "mm", "mil": "mil", "inch": "in"}
 
 
 def csv_header(unit="mm"):
-    """unit: mm / mil / inch / both（both = mm 与 mil 并列两列）。"""
+    """unit: mm / mil / inch / both（both = mm 与 mil 并列两列）。
+
+    ``Length(mm) / Width(mm)`` 固定用 mm，不随坐标单位切换：贴片机与 BOM
+    核对都以毫米为准，混进 mil 反而容易读错。
+    """
     u = units.norm(unit, default="mm")
+    dims = ["Length(mm)", "Width(mm)", "Mount", "SizeSrc"]
     if str(unit).lower() == "both":
         return ["RefDes", "Side", "X(mm)", "X(mil)", "Y(mm)", "Y(mil)", "Rotation",
-                "Package", "Value", "Status", "Dev(mm)", "Dev(mil)", "Source"]
+                "Package", "Value"] + dims + ["Status", "Dev(mm)", "Dev(mil)", "Source"]
     h = _UNIT_HEAD.get(u, "mm")
     return ["RefDes", "Side", "X(%s)" % h, "Y(%s)" % h, "Rotation", "Package",
-            "Value", "Status", "Dev(%s)" % h, "Source"]
+            "Value"] + dims + ["Status", "Dev(%s)" % h, "Source"]
 
 
 # 兼容旧名字
@@ -634,6 +678,15 @@ def _coord(v_mm, unit, both_flags):
     return [units.fmt(f, units.norm(unit, default="mm"))]
 
 
+def _dims(c):
+    """长 / 宽 / 贴装类型 / 数据来源 四列（长宽固定 mm）。"""
+    src = c.get("size_source") or ""
+    if not src and any(c.get(k) for k in ("length", "width", "mount")):
+        src = "attr"                       # 文件里直接给了尺寸/类型列
+    return [_f(c.get("length")), _f(c.get("width")),
+            (c.get("mount") or "").upper(), src or "unknown"]
+
+
 def rows_from_board(board, unit="mm"):
     both = str(unit).lower() == "both"
     rows = []
@@ -643,16 +696,19 @@ def rows_from_board(board, unit="mm"):
             *_coord(c.get("x"), unit, both), *_coord(c.get("y"), unit, both),
             _f(c.get("rot")),
             c.get("package") or "", c.get("value") or "",
+            *_dims(c),
             "", "", *([""] if both else []), "ODB++",
         ])
     return rows
 
 
-def rows_from_xy(data, checked=None, unit="mm"):
+def rows_from_xy(data, checked=None, unit="mm", board=None):
     both = str(unit).lower() == "both"
     by_ref = {}
     if checked:
         by_ref = {r["ref"]: r for r in checked.get("entries") or []}
+    if board is not None:
+        compmod.merge_board_attrs(data.entries, board)
     rows = []
     for e in data.entries:
         c = by_ref.get(e["ref"]) or {}
@@ -661,6 +717,7 @@ def rows_from_xy(data, checked=None, unit="mm"):
             *_coord(e.get("x"), unit, both), *_coord(e.get("y"), unit, both),
             _f(e.get("rot")),
             e.get("package") or "", e.get("value") or "",
+            *_dims(e),
             c.get("status") or "",
             *_coord(c.get("dev"), unit, both), "XY",
         ])

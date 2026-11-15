@@ -97,7 +97,10 @@ class Handler(BaseHTTPRequestHandler):
                 items = [{"ref": c.get("ref"), "x": c.get("x"), "y": c.get("y"),
                           "rot": c.get("rot"), "side": c.get("side") or "",
                           "package": c.get("package") or "", "part": c.get("part") or "",
-                          "value": c.get("value") or ""}
+                          "value": c.get("value") or "",
+                          "length": c.get("length"), "width": c.get("width"),
+                          "mount": c.get("mount") or "",
+                          "size_source": c.get("size_source") or "unknown"}
                          for c in (b.components or [])]
                 return self._json({"count": len(items), "items": items})
             if path == "/api/export/components":
@@ -111,7 +114,8 @@ class Handler(BaseHTTPRequestHandler):
                 if src == "xy":
                     if not st:
                         return self._json({"error": "尚未导入 XY 数据"}, 400)
-                    rows = xy.rows_from_xy(st["data"], st.get("check"), unit=unit_opt)
+                    rows = xy.rows_from_xy(st["data"], st.get("check"),
+                                           unit=unit_opt, board=b)
                     name = (st["data"].name or "xy") + "_xy.csv"
                 else:
                     if b is None:
@@ -165,7 +169,11 @@ class Handler(BaseHTTPRequestHandler):
                     p = os.path.join(ROOT, p)
                 if not os.path.exists(p):
                     return self._json({"error": "路径不存在：%s" % p}, 400)
-                return self._json(self._load(p))
+                try:
+                    return self._json(self._load(p))
+                except (ValueError, OSError) as exc:
+                    # DWG 缺转换器、二进制 DXF、文件损坏等：给人看的一句话，不要丢 traceback
+                    return self._json({"error": str(exc)}, 400)
             if u.path == "/api/xy":
                 p = (payload.get("path") or "").strip().strip('"')
                 if not p:
@@ -186,6 +194,43 @@ class Handler(BaseHTTPRequestHandler):
                 with LOCK:
                     STATE["xy"] = None
                 return self._json({"loaded": False})
+            if u.path == "/api/layer/kind":
+                try:
+                    i = int(payload.get("i"))
+                except (TypeError, ValueError):
+                    return self._json({"error": "请提供层序号 i"}, 400)
+                with LOCK:
+                    b = STATE["board"]
+                if b is None:
+                    return self._json({"error": "尚未加载任何资料"}, 400)
+                try:
+                    project.reclassify_layer(b, i, payload.get("kind"), payload.get("side"))
+                except (IndexError, ValueError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+                with LOCK:
+                    STATE["summary"] = project.board_summary(b)
+                    return self._json(STATE["summary"])
+            if u.path == "/api/component/attr":
+                ref = str(payload.get("ref") or "").strip()
+                with LOCK:
+                    b = STATE["board"]
+                if b is None:
+                    return self._json({"error": "尚未加载任何资料"}, 400)
+                target = next((c for c in (b.components or []) if c.get("ref") == ref), None)
+                if target is None:
+                    return self._json({"error": "板上没有该位号：%s" % ref}, 400)
+                for key in ("length", "width"):
+                    if key in payload:
+                        v = _fnum(payload.get(key), None)
+                        target[key] = None if v is None or v <= 0 else round(v, 4)
+                if "mount" in payload:
+                    m = str(payload.get("mount") or "").strip().upper()
+                    target["mount"] = m if m in ("SMD", "TH") else ""
+                target["size_source"] = "manual" if any(
+                    target.get(k) for k in ("length", "width", "mount")) else "unknown"
+                with LOCK:
+                    STATE["summary"] = project.board_summary(b)
+                    return self._json(STATE["summary"])
             return self._json({"error": "not found"}, 404)
         except Exception:
             traceback.print_exc()
@@ -292,6 +337,8 @@ def _sample_path(name):
         cands = [os.path.join(SAMPLES_DIR, "demo-gerber.zip")]
     elif name in ("inch", "imperial", "demo-inch", "i"):
         cands = [os.path.join(SAMPLES_DIR, "demo-inch")]
+    elif name in ("dxf", "cad", "dwg", "d"):
+        cands = [os.path.join(SAMPLES_DIR, "demo.dxf")]
     else:
         cands = [os.path.join(SAMPLES_DIR, name)]
     for c in cands:
@@ -302,8 +349,9 @@ def _sample_path(name):
 
 _ARCHIVE_EXT = {"zip", "tgz", "tar", "gz", "bz2", "rar", "7z"}
 _GERBER_EXT = {"gbr", "ger", "pho", "art", "gdo", "gx", "gcx", "cmp", "sol", "stc", "sts"}
+_CAD_EXT = {"dxf", "dwg"}
 # 只有这些扩展名才值得按文件名猜类别，避免 dumpstack.log / win10.exe 之类误判
-_KNOWN_EXT = set(project._EXT_KIND.keys()) | _GERBER_EXT
+_KNOWN_EXT = set(project._EXT_KIND.keys()) | _GERBER_EXT | _CAD_EXT
 _MAX_DIRS = 400
 _MAX_FILES = 2000
 _HINT_BUDGET = 60          # 最多为多少个同级子目录做「内含资料」探测
@@ -317,6 +365,8 @@ def _file_kind(name):
         return ""
     if ext in _ARCHIVE_EXT:
         return "archive"
+    if ext in _CAD_EXT:
+        return "cad"
     if ext in _GERBER_EXT:
         return "gerber"
     if re.fullmatch(r"g(p?)\d{1,2}", ext):
@@ -491,7 +541,7 @@ def main(argv=None):
     url = "http://%s:%d/" % (args.host, args.port)
     print("=" * 58)
     print(" PCB-CAM 已启动：%s" % url)
-    print(" 支持：Gerber(RS-274X) / Excellon / ODB++(目录·tgz·zip) / IPC-D-356")
+    print(" 支持：Gerber(RS-274X) / Excellon / ODB++ / IPC-D-356 / DXF / DWG(需本机转换器)")
     print(" 关闭窗口或 Ctrl+C 退出")
     print("=" * 58)
     if args.open:

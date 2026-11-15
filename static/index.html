@@ -76,6 +76,20 @@
   .layer .tag.outline{color:#ffd166; border-color:#4a3f22}
   .layer .cnt{font-size:11px; color:var(--fg2); text-align:right}
   .layer .opa{width:56px; accent-color:var(--accent); cursor:pointer}
+  .ltrow{grid-column:1/-1; display:flex; align-items:center; gap:4px;
+    padding:0 0 2px 22px; font-size:10px; color:var(--fg2)}
+  .ltrow .ltlab{opacity:.7; white-space:nowrap}
+  .ltrow select{
+    background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+    border-radius:4px; padding:1px 2px; font:inherit; font-size:10.5px;
+    outline:none; cursor:pointer; max-width:88px;
+  }
+  .ltrow select:focus{border-color:var(--accent)}
+  .ltrow select option{background:var(--panel); color:var(--fg)}
+  .ltrow .ltreset{margin-left:auto; padding:0 5px; font-size:10px; line-height:16px;
+    border-radius:4px; border:1px solid var(--line); cursor:pointer; color:var(--fg2)}
+  .ltrow .ltreset:hover{border-color:var(--accent); color:var(--accent)}
+  .ltrow .ltman{color:var(--accent); font-size:9.5px; white-space:nowrap}
   table{width:100%; border-collapse:collapse; font-size:11.5px}
   th,td{padding:3px 4px; text-align:left; border-bottom:1px solid var(--line)}
   th{color:var(--fg2); font-weight:500; font-size:10.5px; letter-spacing:.5px}
@@ -225,7 +239,7 @@
   body.light .chip.ok{color:#1f7a4d}
   body.light .chip.warn{color:#8a6113}
   body.light .chip.err{color:#b12929}
-  .comp{display:grid; grid-template-columns:auto 15px 1fr auto; gap:5px; align-items:center;
+  .comp{display:grid; grid-template-columns:auto 15px 1fr auto auto; gap:5px; align-items:center;
     padding:2px 4px; border-radius:4px; cursor:pointer; font-size:11.5px; line-height:1.6}
   .comp:hover{background:var(--panel2)}
   .comp.sel{background:rgba(78,161,255,.18)}
@@ -234,6 +248,8 @@
     border-radius:3px; line-height:11px}
   .comp .cs.b{color:#3b7dd8; border-color:#3b5c8a}
   .comp .xy{color:var(--fg2); font-size:10.5px; text-align:right; font-variant-numeric:tabular-nums}
+  .comp .mt{font-size:9px; color:var(--accent); border:1px solid var(--line); border-radius:3px;
+    padding:0 3px; line-height:13px; white-space:nowrap; text-align:center}
   .comp .st{width:6px; height:6px; border-radius:50%; background:var(--fg2); opacity:.5}
   .comp .st.ok{background:#2f9e6b; opacity:1}
   .comp .st.offset,.comp .st.wrong_side{background:#e0a01e; opacity:1}
@@ -243,9 +259,9 @@
 </head>
 <body>
 <header>
-  <div class="brand"><b>PCB-CAM</b><span>迷你 CAM350 · Gerber / ODB++</span></div>
+  <div class="brand"><b>PCB-CAM</b><span>Gerber / ODB++ / DXF 查看与分析</span></div>
   <div class="pathbar">
-    <input id="path" spellcheck="false" placeholder="输入 Gerber 目录 / zip / tgz / ODB++ 目录 / 单个文件路径">
+    <input id="path" spellcheck="false" placeholder="输入 Gerber / ODB++ 目录 / zip / tgz / DXF / DWG 路径">
     <button id="btnBrowse" class="primary" title="浏览本机文件与文件夹（Ctrl+O）">浏览…</button>
     <button id="btnLoad" title="载入输入框中的路径">加载</button>
     <button id="btnSample" title="加载内置演示板">示例</button>
@@ -665,7 +681,9 @@ function pickActivate(r){
 
 function updatePickFoot(){
   const it = P.selItem;
-  $('pickSel').textContent = it ? it.path : (P.path || '');
+  const isDwg = it && it.type === 'file' && /\.dwg$/i.test(it.path || '');
+  $('pickSel').textContent = (it ? it.path : (P.path || '')) +
+    (isDwg ? '　·　DWG 需本机转换器，或在 CAD 里另存为 ASCII DXF' : '');
   $('pickEnter').disabled = !it;
   $('pickEnter').textContent = (it && it.type === 'dir') ? '进入文件夹'
     : (it ? (P.mode === 'xy' ? '导入此文件' : '打开选中') : (P.mode === 'xy' ? '导入' : '打开选中'));
@@ -781,7 +799,49 @@ async function applySummary(s){
 
 /* ---------------- 侧栏 ---------------- */
 const KIND_CN = {copper:'铜箔', mask:'阻焊', silk:'丝印', paste:'钢网', outline:'外形',
-  drill:'钻孔', rout:'铣槽', doc:'文档', component:'器件', other:'其它'};
+  drill:'钻孔', rout:'铣槽', doc:'文档', component:'器件', other:'其它',
+  dxf:'CAD', cad:'CAD', dwg:'DWG'};
+const KIND_OPTIONS = [['copper','铜箔'], ['mask','阻焊'], ['silk','丝印'], ['paste','钢网'],
+  ['outline','外形'], ['rout','铣槽'], ['drill','钻孔'], ['doc','文档'],
+  ['component','器件'], ['other','其它']];
+const SIDE_CN = {top:'顶层', bottom:'底层', inner:'内层', both:'双面', none:'无'};
+const SIDE_OPTIONS = [['none','无'], ['top','顶层'], ['bottom','底层'], ['inner','内层'], ['both','双面']];
+
+const optHtml = (list, cur) => list.map(([v, t]) =>
+  `<option value="${v}"${v === cur ? ' selected' : ''}>${esc(t)}</option>`).join('');
+
+/* 重新套用服务端返回的新摘要：层顺序不变，所以已缓存的图元不用重新拉 */
+function patchSummary(s, changedIndex){
+  if (!s) return;
+  const n0 = (S.summary && S.summary.layers) ? S.summary.layers.length : 0;
+  S.summary = s;
+  if (n0 !== s.layers.length){
+    S.objs = new Array(s.layers.length).fill(null);
+    S.vis = s.layers.map(l => l.visible !== false);
+    S.opa = s.layers.map(l => (l.opacity == null ? 1.0 : l.opacity));
+  } else if (changedIndex != null && s.layers[changedIndex]){
+    S.opa[changedIndex] = s.layers[changedIndex].opacity == null
+      ? 1.0 : s.layers[changedIndex].opacity;
+  }
+  $('path').value = s.path || $('path').value;
+  buildLayerList(); buildDrillBox(); buildAnalysis(); buildNetBox(); render();
+}
+
+/* 手动改层类型 / 板面：即时重算配色、透明度与分析 */
+async function setLayerKind(i, kind, side){
+  loading(true, '重算图层分析…');
+  try{
+    const s = await api('/api/layer/kind', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({i, kind, side})
+    });
+    patchSummary(s, i);
+    const l = s.layers[i];
+    status(l.name + ' → ' + (KIND_CN[l.kind] || l.kind) +
+      (SIDE_CN[l.side] ? ' / ' + SIDE_CN[l.side] : ''), 'ok');
+  } catch(e){ status(e.message, 'err'); }
+  finally { loading(false); }
+}
 
 function buildLayerList(){
   const box = $('layerList');
@@ -799,7 +859,14 @@ function buildLayerList(){
       `<span class="nm" title="${esc(l.file)}">${esc(l.name)}</span>` +
       `<span class="tag ${l.kind}">${KIND_CN[l.kind]||l.kind}</span>` +
       `<span class="cnt">${fmtN(l.count)}</span>` +
-      `<input type="range" class="opa" min="10" max="100" value="${Math.round(S.opa[i]*100)}" title="透明度">`;
+      `<input type="range" class="opa" min="10" max="100" value="${Math.round(S.opa[i]*100)}" title="透明度">` +
+      `<div class="ltrow">` +
+        `<span class="ltlab">类型</span>` +
+        `<select class="lkind" title="手动指定层类型">${optHtml(KIND_OPTIONS, l.kind)}</select>` +
+        `<select class="lside" title="手动指定所在板面">${optHtml(SIDE_OPTIONS, l.side)}</select>` +
+        (l.kind_source === 'manual' ? '<span class="ltman">手动</span>' : '') +
+        `<span class="ltreset" title="按文件名重新自动判别">自动</span>` +
+      `</div>`;
     row.querySelector('.ck').addEventListener('change', (e) => {
       S.vis[i] = e.target.checked;
       row.classList.toggle('off', !S.vis[i]);
@@ -814,6 +881,13 @@ function buildLayerList(){
       const solo = S.vis.filter((v, k) => k !== i && v).length > 0 && !S.vis[i];
       S.vis = S.vis.map((v, k) => k === i ? true : (solo ? false : v));
       buildLayerList(); render();
+    });
+    const ksel = row.querySelector('.lkind'), ssel = row.querySelector('.lside');
+    ksel.addEventListener('change', () => setLayerKind(i, ksel.value, null));
+    ssel.addEventListener('change', () => setLayerKind(i, null, ssel.value));
+    row.querySelector('.ltreset').addEventListener('click', (e) => {
+      e.stopPropagation();
+      setLayerKind(i, 'auto', null);
     });
     box.appendChild(row);
   });
@@ -851,6 +925,13 @@ function buildAnalysis(){
     rows.push(['板面尺寸', txt]);
   }
   rows.push(['图层数', `${a.layer_count} <span class="pill">铜箔 ${a.copper_count}</span>`]);
+  const dx = S.summary && S.summary.dxf;
+  if (dx){
+    const st = dx.stats || {};
+    rows.push(['CAD 图纸', `${esc(dx.units || 'mm')} 单位 · ${fmtN(st.entities || 0)} 实体 · ` +
+      `${fmtN(st.objects || 0)} 图元` + (dx.blocks ? ` · ${fmtN(dx.blocks)} 块` : '')]);
+    if (dx.converter) rows.push(['DWG 转换', esc(dx.converter)]);
+  }
   if (a.units_in){
     const nm = {mm: 'mm 公制', inch: 'inch 英制', micron: 'µm'};
     const lu = (a.units_in.layers || []).map(u => nm[u] || u);
@@ -1007,6 +1088,20 @@ function drawObj(c, o, pxScale, view, dpr, nested){
       c.beginPath(); addPoly(c, o.out);
       (o.in || []).forEach(h => addPoly(c, h));
       c.fill('evenodd');
+      break;
+    }
+    case 'text': {
+      // DXF TEXT / MTEXT：全局变换是 Y 翻转的，这里局部翻回来，文字才不会倒着显示
+      const h = Math.max(Number(o.h) || 1, 0.05);
+      c.save();
+      c.translate(o.p[0], o.p[1]);
+      c.scale(1, -1);
+      if (o.r) c.rotate(-Number(o.r) * Math.PI / 180);
+      c.font = h.toFixed(3) + 'px sans-serif';
+      c.textAlign = 'left';
+      c.textBaseline = 'bottom';
+      c.fillText(String(o.s || ''), 0, 0);
+      c.restore();
       break;
     }
     case 'group': {
@@ -1233,7 +1328,9 @@ function compRecords(){
 function setBoardComps(list){
   S.boardComps = (list || []).map(c => ({
     ref: c.ref || '', x: Number(c.x) || 0, y: Number(c.y) || 0,
-    side: c.side || '', rot: c.rot, package: c.package || c.part || '', value: c.value || ''
+    side: c.side || '', rot: c.rot, package: c.package || c.part || '', value: c.value || '',
+    length: Number(c.length) || 0, width: Number(c.width) || 0,
+    mount: (c.mount || '').toUpperCase(), size_source: c.size_source || 'unknown'
   }));
   if (!(S.xyComps || []).length) S.compView = 'board';
   S.selComp = -1;
@@ -1253,7 +1350,9 @@ function applyXY(d){
   S.xyOpts = (d && d.opts) || S.xyOpts || {};
   S.xyComps = ((d && d.entries) || []).map(e => ({
     ref: e.ref, x: Number(e.x) || 0, y: Number(e.y) || 0, side: e.side || '',
-    rot: e.rot, package: e.package || '', value: e.value || ''
+    rot: e.rot, package: e.package || '', value: e.value || '',
+    length: Number(e.length) || 0, width: Number(e.width) || 0,
+    mount: (e.mount || '').toUpperCase(), size_source: e.size_source || 'unknown'
   }));
   if (S.xyComps.length) S.compView = 'xy';
   S.selComp = -1;
@@ -1310,8 +1409,16 @@ function renderCompHead(){
     if (c.board_only_count) chips += '<span class="chip warn">板上多 ' + c.board_only_count + '</span>';
   }
   const off = c && c.max_offset ? ' · 最大偏差 ' + udual(c.max_offset) : '';
+  const all = currentComps();
+  const nSmd = all.filter(x => x.mount === 'SMD').length;
+  const nTh = all.filter(x => x.mount === 'TH').length;
+  const nSize = all.filter(x => x.length > 0).length;
+  const dimChips = (nSmd || nTh || nSize)
+    ? '<div class="csum"><span class="chip">SMD ' + nSmd + '</span>' +
+      '<span class="chip warn">TH ' + nTh + '</span>' +
+      '<span class="chip">已估尺寸 ' + nSize + '/' + n + '</span></div>' : '';
   head.innerHTML = tabs +
-    (chips ? '<div class="csum">' + chips + '</div>' : '') +
+    (chips ? '<div class="csum">' + chips + '</div>' : '') + dimChips +
     '<div class="chead">共 ' + n + ' 个' + off + ' <span style="opacity:.6">点条目定位</span></div>' +
     alignRow();
   Array.prototype.forEach.call(head.querySelectorAll('.tab'), el => {
@@ -1414,13 +1521,22 @@ function renderCompList(){
     const i = item[0], c = item[1], r = rec[c.ref];
     const st = r ? r.status : '';
     const side = c.side === 'bottom' ? 'B' : (c.side === 'top' ? 'T' : '·');
+    const L = Number(c.length) || 0, W = Number(c.width) || 0;
+    const dims = (L > 0 || W > 0)
+      ? (L > 0 ? L.toFixed(2) : '?') + '×' + (W > 0 ? W.toFixed(2) : '?') + 'mm' : '';
     const tip = (c.ref || '') + ' ' + (c.package || '') + ' ' + (c.value || '') +
       ' · X ' + udual(c.x, 2) + '　Y ' + udual(c.y, 2) +
+      (dims ? ' · 长×宽 ' + dims : '') +
+      (c.mount ? ' · ' + c.mount : '') +
+      (c.size_source ? ' · 来源 ' + c.size_source : '') +
       (r && r.note ? ' · ' + r.note : '');
+    const badge = (c.mount || dims)
+      ? esc((c.mount || '?') + (dims ? ' ' + dims : '')) : '<span style="opacity:.35">—</span>';
     return '<div class="comp' + (i === S.selComp ? ' sel' : '') + '" data-i="' + i + '" title="' + esc(tip) + '">' +
       '<b>' + esc(c.ref) + '</b>' +
       '<span class="cs' + (c.side === 'bottom' ? ' b' : '') + '">' + side + '</span>' +
       '<span class="xy">' + ucoord(c.x) + ', ' + ucoord(c.y) + '</span>' +
+      '<span class="mt">' + badge + '</span>' +
       '<span class="st ' + st + '"></span>' +
       '</div>';
   }).join('');
@@ -1501,6 +1617,19 @@ function drawComps(g){
     g.stroke();
     if (big){
       g.beginPath(); g.arc(px, py, rad + 5, 0, TAU); g.stroke();
+    }
+    // 长/宽已知时画元件本体虚线框（便于核对封装占位）
+    const L = Number(c.length) || 0, W = Number(c.width) || 0;
+    if (L > 0 && W > 0 && v.s > 0.5){
+      const hw = L / 2 * v.s, hh = W / 2 * v.s;
+      g.save();
+      g.translate(px, py);
+      if (c.rot) g.rotate(-(Number(c.rot) || 0) * Math.PI / 180);
+      g.setLineDash([3, 3]);
+      g.lineWidth = 1;
+      g.strokeRect(-hw, -hh, hw * 2, hh * 2);
+      g.setLineDash([]);
+      g.restore();
     }
     if (lab || big){
       g.font = big ? 'bold 11px ui-monospace, Consolas, monospace' : '10px ui-monospace, Consolas, monospace';
@@ -1693,7 +1822,7 @@ $('allOff').addEventListener('click', () => { S.vis = S.vis.map(() => false); bu
 $('btnLoad').addEventListener('click', () => loadPath($('path').value));
 $('path').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadPath($('path').value); });
 $('btnSample').addEventListener('click', () => {
-  const order = ['gerber', 'odb', 'inch'];
+  const order = ['gerber', 'odb', 'inch', 'dxf'];
   const i = order.indexOf(S.sampleName || 'gerber');
   loadSample(order[(i + 1) % order.length]);
 });
@@ -1774,6 +1903,11 @@ function exportSVG(){
         out.push(`<circle cx="${o.c[0].toFixed(3)}" cy="${o.c[1].toFixed(3)}" r="${o.r.toFixed(3)}" fill="none" stroke-width="${(o.r - o.ri).toFixed(3)}"/>`);
       } else if (o.t === 'poly2' && o.out){
         out.push(`<path d="M${o.out.map(p => p[0].toFixed(3) + ' ' + p[1].toFixed(3)).join(' L')} Z"/>`);
+      } else if (o.t === 'text' && o.s){
+        // 外层 g 有 scale(1,-1)，文字自身再翻一次才是正立
+        out.push(`<text x="0" y="0" font-size="${Math.max(Number(o.h) || 1, 0.05).toFixed(3)}" ` +
+          `transform="translate(${Number(o.p[0]).toFixed(3)},${Number(o.p[1]).toFixed(3)}) scale(1,-1)` +
+          `${o.r ? ' rotate(' + (-Number(o.r)).toFixed(2) + ')' : ''}">${esc(o.s)}</text>`);
       }
     });
     out.push(`</g>`);

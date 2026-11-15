@@ -5,12 +5,16 @@
 退出码 0 表示全部通过。
 """
 import os
+import shutil
 import sys
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
+from pcb_cam import components as compmod  # noqa: E402
+from pcb_cam import dxf as dxfm  # noqa: E402
 from pcb_cam import project  # noqa: E402
 from pcb_cam import report  # noqa: E402
 from pcb_cam import units  # noqa: E402
@@ -96,6 +100,108 @@ def main():
     # 英制（inch）样例：%MOIN / M72 / 2:4，换算后应与 1.90 x 1.40 in 完全一致
     bi = dump("inch", os.path.join(BASE, "demo-inch"), "gerber", 2, 3,
               expect_size=(48.26, 35.56))
+    # DXF 图纸：5 个 CAD 图层、mm 单位、60 x 40 板框
+    bd = dump("dxf", os.path.join(BASE, "demo.dxf"), "dxf", 5, 0,
+              expect_size=(60.0, 40.0))
+
+    # ---- DXF / DWG 导入 ----
+    print("=" * 74)
+    print("DXF / DWG")
+    if bd:
+        check((bd.dxf or {}).get("units") == "mm", "DXF $INSUNITS=4 识别为 mm")
+        check((bd.dxf or {}).get("blocks") == 1, "DXF BLOCKS 块定义被识别")
+        check(any(o.get("t") == "text" for l in bd.layers for o in l["objects"]),
+              "DXF TEXT / MTEXT 生成可渲染的 text 图元")
+        check(any(l["kind"] == "outline" for l in bd.layers),
+              "DXF 图层名 OUTLINE 自动判为外形层")
+        warns = (bd.analysis or {}).get("warnings") or []
+        check(not any("未找到铜箔层" in w or "未找到钻孔" in w for w in warns),
+              "CAD 图纸不套用 PCB 制造资料的完整性告警")
+        with open(os.path.join(BASE, "demo.dxf"), "r", encoding="utf-8") as f:
+            txt = f.read()
+        check(project.sniff_text(txt) == "dxf", "sniff_text 正确识别 ASCII DXF")
+        check(project.sniff_text("%FSLAX24Y24*%") == "gerber", "Gerber 未被 DXF 嗅探误判")
+
+        # 无转换器时必须给出导出指引，而不是假装读得懂二进制
+        fake_dwg = os.path.join(BASE, "bridge.dwg")
+        with open(fake_dwg, "wb") as f:
+            f.write(b"AC1015\x00\x01binary-dwg")
+        try:
+            old = os.environ.pop("PCB_CAM_DWG2DXF", None), os.environ.pop("PCB_CAM_ODA", None)
+            with mock.patch.object(dxfm.shutil, "which", return_value=None):
+                try:
+                    dxfm.convert_dwg(fake_dwg)
+                    check(False, "无转换器时应抛出带指引的错误")
+                except ValueError as exc:
+                    check("另存为" in str(exc) and "DXF" in str(exc),
+                          "无转换器时给出「另存为 DXF」操作指引")
+
+            # 模拟本机装了 dwg2dxf：转换 -> 解析 -> 出板
+            dxf_path = os.path.join(BASE, "demo.dxf")
+            os.environ["PCB_CAM_DWG2DXF"] = dxf_path     # 只作为「存在的可执行文件」占位
+            def fake_run(cmd, timeout=120):
+                shutil.copyfile(dxf_path, cmd[2])
+                return 0, b"ok"
+            with mock.patch.object(dxfm, "_run", fake_run):
+                converted, conv = dxfm.convert_dwg(fake_dwg)
+                check(conv == "LibreDWG dwg2dxf" and os.path.getsize(converted) > 100,
+                      "DWG -> DXF 转换器桥接产出可用 DXF")
+                bw = project.load_board(fake_dwg)
+                check(bw.format == "dxf" and len(bw.layers) == 5,
+                      "DWG 经转换后与 DXF 走同一套图层渲染链路")
+                check(any("dwg2dxf" in w for w in bw.warnings),
+                      "摘要提示本次所用的 DWG 转换器")
+        finally:
+            os.environ.pop("PCB_CAM_DWG2DXF", None)
+            os.remove(fake_dwg)
+            for k, v in zip(("PCB_CAM_DWG2DXF", "PCB_CAM_ODA"), old):
+                if v is not None:
+                    os.environ[k] = v
+
+    # ---- 层的类型手动选择 ----
+    print("=" * 74)
+    print("LAYER RECLASSIFY")
+    brc = project.load_board(os.path.join(BASE, "demo.dxf"))
+    idx = next((i for i, l in enumerate(brc.layers) if l["name"] == "DOC_NOTES"), None)
+    check(idx is not None, "找到待改类型的 CAD 图层")
+    if idx is not None:
+        before = [l["name"] for l in brc.layers]
+        project.reclassify_layer(brc, idx, "outline", "both")
+        check(brc.layers[idx]["kind"] == "outline" and brc.layers[idx]["side"] == "both",
+              "手动改类型/板面即时生效")
+        check([l["name"] for l in brc.layers] == before, "改类型不重排层顺序（前端缓存不错位）")
+        check(project.board_summary(brc)["layers"][idx]["kind_source"] == "manual",
+              "摘要里标记手动来源")
+        project.reclassify_layer(brc, idx, "auto")
+        check(brc.layers[idx]["kind"] == "doc", "'自动' 可按文件名复原")
+
+    # ---- 元件长 / 宽 / 类型 ----
+    print("=" * 74)
+    print("COMPONENT SIZE / MOUNT")
+    check(compmod.parse_size("1.6x0.8mm") == (1.6, 0.8), "尺寸字符串 1.6x0.8mm 解析")
+    check(compmod.parse_size("0603") == (1.6, 0.8), "封装代号 0603 -> 1.6 x 0.8 mm")
+    check(compmod.normalize_mount("THT") == "TH" and
+          compmod.normalize_mount("Surface Mount") == "SMD", "贴装类型归一化 SMD / TH")
+    bo = project.load_board(os.path.join(BASE, "demo-odb"))
+    if bo:
+        r1 = next((c for c in bo.components if c.get("ref") == "R1"), None)
+        check(bool(r1) and abs((r1.get("length") or 0) - 1.6) < 1e-6 and
+              abs((r1.get("width") or 0) - 0.8) < 1e-6 and r1.get("mount") == "SMD",
+              "ODB++ PRP 属性里的长/宽/贴装类型被导出")
+        check(all((c.get("length") or 0) > 0 for c in bo.components),
+              "板上每个器件都推断出了长度（属性 / 焊盘 / 封装代号三级兜底）")
+        head = xy.csv_header("mm")
+        for col in ("Length(mm)", "Width(mm)", "Mount", "SizeSrc"):
+            check(col in head, "坐标 CSV 表头含 %s" % col)
+        rows = xy.rows_from_board(bo, unit="mm")
+        check(bool(rows) and len(rows[0]) == len(head) and
+              rows[0][head.index("Mount")] in ("SMD", "TH", ""),
+              "坐标 CSV 行含长/宽/类型且列数对齐")
+    with open(os.path.join(BASE, "demo-xy.csv"), "r", encoding="utf-8") as f:
+        xd = xy.parse_xy(f.read(), "demo-xy.csv")
+    check(bool(xd.entries) and abs((xd.entries[0].get("length") or 0) - 1.6) < 1e-6
+          and xd.entries[0].get("mount") == "SMD",
+          "XY 文件的 Length / Width / Mount 列被解析")
 
     if b1:
         md = report.build_report(b1)

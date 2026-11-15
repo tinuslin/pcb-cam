@@ -238,16 +238,19 @@ def build_report(board, extra=None):
     if board.components:
         lines.append("## 六、器件清单（前 30）")
         lines.append("")
-        lines.append("| 位号 | 面 | 封装 | 值 | X(%s) | Y(%s) | 旋转 |"
+        lines.append("| 位号 | 面 | 封装 | 值 | X(%s) | Y(%s) | 旋转 | 长(mm) | 宽(mm) | 类型 |"
                      % (F.head, F.head))
-        lines.append("|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
         for c in board.components[:30]:
-            lines.append("| %s | %s | %s | %s | %s | %s | %s |" % (
+            lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
                 c.get("ref", "") or "-",
                 "底" if (c.get("side") or "") == "bottom" else ("顶" if c.get("side") else "-"),
                 c.get("package") or "-", c.get("value") or "-",
                 F.cell(c.get("x")), F.cell(c.get("y")),
-                _fmt(c.get("rot"), 0) if c.get("rot") is not None else "-"))
+                _fmt(c.get("rot"), 0) if c.get("rot") is not None else "-",
+                _fmt(c.get("length"), 2) if c.get("length") else "-",
+                _fmt(c.get("width"), 2) if c.get("width") else "-",
+                c.get("mount") or "?"))
         if len(board.components) > 30:
             lines.append("")
             lines.append("_共 %d 个器件，此处仅列前 30；完整清单用「导出 CSV」。_" % len(board.components))
