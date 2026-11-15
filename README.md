@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tinuslin/pcb-cam/actions/workflows/ci.yml/badge.svg)](https://github.com/tinuslin/pcb-cam/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.8%2B-3776ab.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776ab.svg)](https://www.python.org/)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#)
 
 纯 Python 标准库实现的 PCB CAM 工具，用来**读 Gerber / ODB++ / DXF 等生产资料并做工程分析**：
@@ -78,7 +78,7 @@ start-pcb-cam.bat
 
 浏览器打开 <http://127.0.0.1:8790/>。首次进入会自动载入内置演示板。
 
-需要 Python 3.8+，无需 `pip install` 任何东西。
+需要 Python 3.10+（3.8 / 3.9 同样可运行：项目只用标准库、无版本专属语法，CI 在 3.10 / 3.11 / 3.13 上验证），无需 `pip install` 任何东西。
 
 ### 命令行预览（无浏览器，直接出 PNG）
 
